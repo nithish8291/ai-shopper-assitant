@@ -1,12 +1,27 @@
 import { Redis } from "@upstash/redis";
 
-export interface Product {
-  id: string;
-  name: string;
-  price: number;
+
+
+export interface ProductSkuDTO {
   skuId?: string;
+  price?: number;
+  available?: boolean;
+  seller?: string;
+  referenceId: string;
   imageUrl?: string;
-  sellerId?: string;
+  name?: string;
+}
+
+export interface Product {
+  productId: string;
+  productName: string;
+  brand?: string;
+  category?: string;
+  linkText?: string;
+  description?: string;
+  FAQ?: string;
+  defaultSku: ProductSkuDTO[];
+  skuOptions: ProductSkuDTO[];
 }
 
 export interface ShoppingContext {

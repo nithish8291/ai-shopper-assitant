@@ -16,10 +16,40 @@ export interface PlannerPlan {
   steps: PlanStep[];
 }
 
+export type AgentAction =
+  | "invoke_tool"
+  | "answer_from_context"
+  | "ask_clarification"
+  | "display_product"
+  | "no_action";
+
+export type NextAction =
+  | null
+  | "generate_product_answer"
+  | "display_product"
+  | "add_to_cart"
+  | "create_cart"
+  | "checkout";
+
 export interface ToolCallResult {
-  tool: string;
-  parameters: Record<string, unknown>;
+  action: AgentAction;
+  tool: string | null;
+  nextAction: NextAction;
+  parameters: {
+    query?: string;
+    productId?: string;
+    productReference?: string;
+    category?: string;
+    priceRange?: string;
+    orderFormId?: string;
+    [key: string]: unknown;
+  };
+
+  shouldInvokeTool: boolean;
+
   confidence: number;
+
   reasoning: string;
+
   response_message: string;
 }

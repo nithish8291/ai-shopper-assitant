@@ -1,21 +1,22 @@
+import { Product } from "@/lib/shopping-memory";
 import { getLLMProvider } from "../../llm/llm.factory";
 import { PlannerPlan, ToolCallResult } from "../types/type";
 import { parsePlan, parseToolCall } from "./parser";
-import { buildPlannerPrompt } from "./prompt";
+import { buildPlannerPrompt, buildProductAnswerPrompt } from "./prompts/prompt";
 
 
-export async function runPlannerAgent(
-  userInput: string
-): Promise<PlannerPlan> {
-  const prompt = buildPlannerPrompt(userInput);
+export async function generateProductAnswerAgent(
+  userInput: string,
+  product: Product
+): Promise<any> {
+  const prompt = buildProductAnswerPrompt(userInput, product);
   const providerOrder = getProviderOrder(process.env.LLM_PROVIDER || "groq");
   const failures: string[] = [];
-
   for (const providerName of providerOrder) {
     try {
       const llm = getLLMProvider(providerName);
       const rawResponse = await llm.generateResponse(prompt);
-      return parsePlan(rawResponse);
+      return rawResponse;
     } catch (error) {
       failures.push(`${providerName}: ${formatError(error)}`);
     }
@@ -48,6 +49,7 @@ export async function runIntentAgent(
     `Intent agent failed for all configured providers (${providerOrder.join(", ")}). ${failures.join(" | ")}`
   );
 }
+
 
 function getProviderOrder(primaryProvider: string): string[] {
   const fallbackProviders = (process.env.LLM_FALLBACK_PROVIDERS ?? "")

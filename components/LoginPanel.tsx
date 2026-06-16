@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { v4 as uuid } from "uuid";
 
 interface LoginPanelProps {
   storeUrl: string;
@@ -15,6 +16,16 @@ export default function LoginPanel({ storeUrl, onLoginSuccess, isEmbedded = fals
   const [error, setError] = useState("");
   const [showIframe, setShowIframe] = useState(isEmbedded);
 
+  const getSessionId = () => {
+    if (typeof window === "undefined") return "server-session";
+    let id = sessionStorage.getItem("shopping-session-id");
+    if (!id) {
+      id = uuid();
+      sessionStorage.setItem("shopping-session-id", id);
+    }
+    return id;
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -27,6 +38,7 @@ export default function LoginPanel({ storeUrl, onLoginSuccess, isEmbedded = fals
         body: JSON.stringify({
           message: "login",
           context: { email, password },
+          sessionId: getSessionId()
         }),
       });
 

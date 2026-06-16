@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { v4 as uuid } from "uuid";
 
 interface PaymentPanelProps {
   orderFormId: string;
@@ -25,6 +26,16 @@ export default function PaymentPanel({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState("");
 
+  const getSessionId = () => {
+    if (typeof window === "undefined") return "server-session";
+    let id = sessionStorage.getItem("shopping-session-id");
+    if (!id) {
+      id = uuid();
+      sessionStorage.setItem("shopping-session-id", id);
+    }
+    return id;
+  }
+
   const handlePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -46,6 +57,7 @@ export default function PaymentPanel({
               cvv: cardData.cvv,
             },
           },
+          sessionId: getSessionId(),
         }),
       });
 

@@ -5,7 +5,7 @@ import {
   getShoppingContext,
   updateShoppingContext,
 } from "@/lib/shopping-memory";
-import { runIntentAgent } from "@/agents/planner/index";
+import { generateProductAnswerAgent, runIntentAgent } from "@/agents/planner/index";
 import { ToolCallResult } from "@/agents/types/type";
 
 const VALID_TOOLS = [
@@ -19,10 +19,23 @@ const VALID_TOOLS = [
   "set_client_profile",
   "set_shipping_address",
   "get_company_address",
-  "place_order",
+  "place_order"
 ];
 
 const MAX_STEPS = 5;
+
+
+const sanitizeParameters =(
+  params: Record<string, unknown>
+): Record<string, unknown> => {
+  return Object.fromEntries(
+    Object.entries(params).filter(
+      ([_, value]) =>
+        value !== null &&
+        value !== undefined
+    )
+  );
+}
 
 export interface ExecutionStep {
   tool: string;
@@ -40,6 +53,22 @@ export interface ExecutionResult {
   data?: unknown;
 }
 
+
+function resolveProductFromContext(
+  context: ShoppingContext,
+  params: Record<string, unknown>
+): Product | undefined {
+  const productId = params.productId as string | undefined;
+
+  if (productId) {
+    return context.lastProducts?.find(
+      p => p.productId === productId
+    );
+  }
+
+  return context.selectedProduct;
+}
+
 /**
  * Multi-step execution loop that:
  * 1. Resolves intent from user message
@@ -53,7 +82,13 @@ export async function executeLoop(
   sessionId: string,
   userMessage: string
 ): Promise<ExecutionResult> {
-  const shoppingContext = await getShoppingContext(sessionId);
+  let shoppingContext: ShoppingContext = {};
+  try {
+    shoppingContext = await getShoppingContext(sessionId);
+  } catch (err) {
+    console.warn("Failed to load shopping context from Redis:", err);
+  }
+
   const steps: ExecutionStep[] = [];
   let lastToolResult: unknown = null;
   let finalMessage = "";
@@ -67,8 +102,47 @@ export async function executeLoop(
       lastToolResult
     );
 
+    console.log("--------------------enrichedContext");
+    
+    console.log(enrichedContext);
+    
     // Run intent agent with full context
     const toolCall = await runIntentAgent(currentMessage, enrichedContext);
+
+    console.log("---------------------toolCall");
+    console.log(toolCall);
+    
+    const parameters = resolveParameters(toolCall, shoppingContext);
+    
+    if (
+        toolCall.action === "answer_from_context" ||
+        toolCall.shouldInvokeTool === false
+      ) {
+        const product = resolveProductFromContext(
+          shoppingContext,
+          parameters
+        );
+
+        if (product) {
+          finalMessage = await generateProductAnswerAgent(
+            userMessage,
+            product
+          );
+        } else {
+          finalMessage = toolCall.response_message;
+        }
+
+        console.log("--------------------finalMessage");
+        console.log(finalMessage);
+        
+        steps.push({
+          tool: "product_detail",
+          parameters,
+          message: finalMessage,
+        });
+
+        break;
+      }
 
     // Check if clarification is needed
     const clarification = detectClarification(toolCall, shoppingContext);
@@ -83,16 +157,32 @@ export async function executeLoop(
     }
 
     // If no tool is needed, return conversational response
-    if (toolCall.tool === "none" || !VALID_TOOLS.includes(toolCall.tool)) {
+    if (toolCall.tool === "none" || !VALID_TOOLS.includes(toolCall.tool || "")) {
       finalMessage = toolCall.response_message;
       break;
     }
 
-    // Resolve parameters with shopping memory
-    const parameters = resolveParameters(toolCall, shoppingContext);
 
+    if (
+      toolCall.action === "display_product"
+    ) {
+      const product = resolveProductFromContext(
+        shoppingContext,
+        parameters
+      );
+
+      finalMessage = product?.productName ?? "Product not found";
+
+      return {
+        success: true,
+        steps,
+        finalMessage,
+        shoppingContext,
+        data: product
+      };
+    }
     // Check for missing required parameters that need clarification
-    const missingParam = checkMissingRequiredParams(toolCall.tool, parameters);
+    const missingParam = checkMissingRequiredParams(toolCall.tool || "", parameters);
     if (missingParam) {
       return {
         success: true,
@@ -104,10 +194,29 @@ export async function executeLoop(
     }
 
     // Execute the tool
-    const toolResult = await callMCPTool(toolCall.tool, parameters);
+    let toolResult: any;
+    try {
+      toolResult = await callMCPTool(toolCall.tool || "", sanitizeParameters(parameters));
+    } catch (err) {
+      console.error(`MCP tool call failed for ${toolCall.tool}:`, err);
+      const errorMsg = err instanceof Error ? err.message : "Tool execution failed";
+      return {
+        success: false,
+        steps,
+        finalMessage: `Sorry, I encountered an error while executing that action: ${errorMsg}. Please try again.`,
+        shoppingContext,
+        data: null,
+      };
+    }
 
+    if(toolResult?.isError) {
+      continue;
+    }
+    console.log("----------------------toolResult");
+    console.log(toolResult);
+    
     const step: ExecutionStep = {
-      tool: toolCall.tool,
+      tool: toolCall.tool || "",
       parameters,
       result: toolResult,
       message: toolCall.response_message,
@@ -116,18 +225,29 @@ export async function executeLoop(
     lastToolResult = toolResult;
 
     // Update shopping context based on tool results
-    await updateContextFromResult(
-      sessionId,
-      shoppingContext,
-      toolCall.tool,
-      parameters,
-      toolResult
-    );
+    try {
+      await updateContextFromResult(
+        sessionId,
+        shoppingContext,
+        toolCall.tool || "",
+        parameters,
+        toolResult
+      );
+    } catch (err) {
+      console.warn("Failed to persist shopping context:", err);
+    }
 
     finalMessage = toolCall.response_message;
 
+    if (toolCall.nextAction === "generate_product_answer") {
+      finalMessage = await generateProductAnswerAgent(
+        userMessage,
+        toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text) : []
+      );
+      break;
+    }
     // Determine if we need another step (e.g., auto-creating cart before adding item)
-    const nextAction = determineNextStep(toolCall.tool, toolResult, shoppingContext);
+    const nextAction = determineNextStep(toolCall.tool || "", toolResult, shoppingContext);
     if (!nextAction) {
       break;
     }
@@ -163,11 +283,15 @@ function buildEnrichedContext(
     context.selectedProduct = shoppingContext.selectedProduct;
   }
 
+  console.log("---------------------shopping context");
+  
+  console.log(shoppingContext);
+  
   if (shoppingContext.lastProducts?.length) {
     context.lastProducts = shoppingContext.lastProducts.map((p) => ({
-      id: p.id,
-      name: p.name,
-      skuId: p.skuId,
+      productId: p?.productId,
+      productName: p?.productName,
+      skuId: p?.defaultSku[0]?.skuId,
     }));
   }
 
@@ -207,7 +331,7 @@ function detectClarification(
   ) {
     if (shoppingContext.lastProducts?.length) {
       const productList = shoppingContext.lastProducts
-        .map((p, i) => `${i + 1}. ${p.name}`)
+        .map((p, i) => `${i + 1}. ${p.productName}`)
         .join("\n");
       return `Which product would you like to add to your cart?\n${productList}`;
     }
@@ -246,8 +370,8 @@ function resolveParameters(
   }
 
   // Inject sellerId from selected product
-  if (!params.sellerId && shoppingContext.selectedProduct?.sellerId) {
-    params.sellerId = shoppingContext.selectedProduct.sellerId;
+  if (!params.sellerId && shoppingContext.selectedProduct?.defaultSku[0]?.seller) {
+    params.sellerId = shoppingContext.selectedProduct.defaultSku[0].seller;
   }
 
   return params;
@@ -308,7 +432,7 @@ async function updateContextFromResult(
       const product = extractProduct(res);
       if (product) {
         patch.selectedProduct = product;
-        patch.selectedSku = product.skuId;
+        patch.selectedSku = product.defaultSku[0]?.skuId;
       }
       break;
     }
@@ -393,19 +517,19 @@ function summarizeToolResult(tool: string, result: unknown): string {
  */
 function extractProducts(res: Record<string, unknown> | undefined): Product[] {
   if (!res) return [];
-
   try {
     const content = res.content as Array<{ text?: string }> | undefined;
     if (content?.[0]?.text) {
       const parsed = JSON.parse(content[0].text);
       if (Array.isArray(parsed)) {
-        return parsed.map((p: Record<string, unknown>) => ({
-          id: String(p.productId || p.id || ""),
-          name: String(p.productName || p.name || ""),
-          price: Number(p.price || p.Price || 0),
-          skuId: String(p.skuId || p.sku || ""),
-          imageUrl: String(p.imageUrl || p.image || ""),
-          sellerId: String(p.sellerId || ""),
+        return parsed.map((p: Product) => ({
+          productId: String(p.productId || ""),
+          productName: String(p.productName || ""),
+          price: Number(p.defaultSku?.[0]?.price || 0),
+          defaultSku: p.defaultSku,
+          skuOptions: p.skuOptions,
+          faq: String(p.FAQ || ""),
+          description: String(p.description || "")
         }));
       }
     }
@@ -427,12 +551,20 @@ function extractProduct(res: Record<string, unknown> | undefined): Product | nul
     if (content?.[0]?.text) {
       const parsed = JSON.parse(content[0].text);
       return {
-        id: String(parsed.productId || parsed.id || ""),
-        name: String(parsed.productName || parsed.name || ""),
-        price: Number(parsed.price || parsed.Price || 0),
-        skuId: String(parsed.skuId || parsed.sku || ""),
-        imageUrl: String(parsed.imageUrl || parsed.image || ""),
-        sellerId: String(parsed.sellerId || ""),
+        productId: String(parsed.productId || parsed.id || ""),
+        productName: String(parsed.productName || parsed.name || ""),
+        defaultSku: [
+          {
+            skuId: String(parsed.skuId || parsed.sku || ""),
+            price: Number(parsed.price || parsed.Price || 0),
+            available: Boolean(parsed.available || parsed.Available || false),
+            seller: String(parsed.seller || parsed.Seller || ""),
+            referenceId: String(parsed.referenceId || parsed.ReferenceId || ""),
+            imageUrl: String(parsed.imageUrl || parsed.image || ""),
+            name: String(parsed.name || parsed.Name || ""),
+          },
+        ],
+        skuOptions: [],
       };
     }
   } catch {

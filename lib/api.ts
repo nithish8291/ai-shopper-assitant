@@ -1,3 +1,4 @@
+import { v4 as uuid } from "uuid";
 export async function sendMessage(message: string, sessionId?: string) {
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -14,7 +15,7 @@ function getSessionId(): string {
   if (typeof window === "undefined") return "server-session";
   let id = sessionStorage.getItem("shopping-session-id");
   if (!id) {
-    id = crypto.randomUUID();
+    id = uuid();
     sessionStorage.setItem("shopping-session-id", id);
   }
   return id;

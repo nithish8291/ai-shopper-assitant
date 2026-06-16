@@ -5,6 +5,7 @@ import ChatWindow from "@/components/ChatWindow";
 import LoginPanel from "@/components/LoginPanel";
 import PaymentPanel from "@/components/PaymentPanel";
 import ProductCard from "@/components/Productcard";
+import { v4 as uuid } from "uuid";
 
 interface Message {
   id: string;
@@ -39,6 +40,16 @@ export default function Home() {
     return msg;
   }, []);
 
+  const getSessionId = () => {
+  if (typeof window === "undefined") return "server-session";
+  let id = sessionStorage.getItem("shopping-session-id");
+    if (!id) {
+      id = uuid();
+      sessionStorage.setItem("shopping-session-id", id);
+    }
+    return id;
+  }
+
   const handleSend = async (message: string) => {
     addMessage("user", message);
     setIsLoading(true);
@@ -54,6 +65,7 @@ export default function Home() {
             user,
             selectedProductId: products[0]?.id,
           },
+          sessionId: getSessionId(),
         }),
       });
 
@@ -82,7 +94,26 @@ export default function Home() {
           break;
         }
 
-        case "add_to_cart": {
+        case "product_detail": {
+            if(data?.message){
+              addMessage("assistant", data.message);
+            }else {
+              addMessage("assistant", "No details found for this product.");
+            }
+            break;
+        }
+
+        case "get_sku_details": {
+          if(data?.message){
+            addMessage("assistant", data.message);
+          }else {
+            addMessage("assistant", "No details found for this SKU.");
+          }
+          break;
+        }
+
+        case "add_to_cart":
+        case "update_item_in_cart": {
           const cartData = data.data?.content?.[0]?.text
             ? JSON.parse(data.data.content[0].text)
             : data.data;
@@ -110,7 +141,8 @@ export default function Home() {
           break;
         }
 
-        case "checkout": {
+        case "checkout":
+        case "proceed_to_checkout": {
           if (!user) {
             addMessage("system", "Please login first to proceed with checkout.");
             setActivePanel("login");
@@ -132,7 +164,7 @@ export default function Home() {
         }
 
         default: {
-          const text = data.data?.content?.[0]?.text || JSON.stringify(data.data);
+          const text = data.message || data.data?.content?.[0]?.text || JSON.stringify(data.data);
           addMessage("assistant", text);
         }
       }
