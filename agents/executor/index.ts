@@ -325,17 +325,15 @@ function detectClarification(
 
   // Adding to cart but no product selected and no SKU provided
   if (
-    toolCall.tool === "update_item_in_cart" &&
-    !toolCall.parameters.skuId &&
-    !shoppingContext.selectedSku
+    toolCall.action === "ask_clarification"
   ) {
     if (shoppingContext.lastProducts?.length) {
       const productList = shoppingContext.lastProducts
         .map((p, i) => `${i + 1}. ${p.productName}`)
         .join("\n");
-      return `Which product would you like to add to your cart?\n${productList}`;
+      return `Which product would you like to know more about?\n${productList}`;
     }
-    return "Which product would you like to add to your cart? Please search for a product first.";
+    return "Which product would you like to know more about? Please search for a product first.";
   }
 
   // Checkout without cart
