@@ -2,7 +2,7 @@ import { Product } from "@/lib/shopping-memory";
 import { getLLMProvider } from "../../llm/llm.factory";
 import { PlannerPlan, ToolCallResult } from "../types/type";
 import { parsePlan, parseToolCall } from "./parser";
-import { buildPlannerPrompt, buildProductAnswerPrompt } from "./prompts/prompt";
+import { buildPlannerPrompt, buildProductAnswerPrompt } from "../prompts";
 
 
 export async function generateProductAnswerAgent(

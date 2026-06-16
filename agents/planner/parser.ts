@@ -32,6 +32,9 @@ export function parseToolCall(rawResponse: string): ToolCallResult {
         console.error("Failed to parse tool call response:", error);
         return {
             tool: "none",
+            action: "no_action",
+            shouldInvokeTool: false,
+            nextAction: null,
             parameters: {},
             confidence: 0,
             reasoning: "Failed to parse LLM response",
