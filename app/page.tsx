@@ -8,6 +8,7 @@ import ProductCard from "@/components/Productcard";
 import { ClientProvider } from "@/lib/clientContext";
 import ClientDetails from "@/components/ClientDetails";
 import { v4 as uuid } from "uuid";
+import CheckoutB2BForm from "@/components/CheckoutB2BForm";
 
 interface Message {
   id: string;
@@ -44,13 +45,24 @@ export default function Home() {
 
   const getSessionId = () => {
   if (typeof window === "undefined") return "server-session";
-  let id = sessionStorage.getItem("shopping-session-id");
+  let id = localStorage.getItem("shopping-session-id");
     if (!id) {
       id = uuid();
-      sessionStorage.setItem("shopping-session-id", id);
+      localStorage.setItem("shopping-session-id", id);
     }
     return id;
   }
+
+  const fetchCachedOrderForm = async (sessionId: string) => {
+    try {
+      const res = await fetch(`/api/orderform?sessionId=${encodeURIComponent(sessionId)}`);
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body?.orderForm ?? body;
+    } catch (err) {
+      return null;
+    }
+  };
 
   const handleSend = async (message: string, meta?: any) => {
     addMessage("user", message);
@@ -154,18 +166,6 @@ export default function Home() {
         }
         case "view_cart":
         case "get_cart": {
-          // const cartInfo = data.data?.content?.[0]?.text
-          //   ? JSON.parse(data.data.content[0].text)
-          //   : data.data;
-          // setCart(cartInfo);
-          // if (cartInfo?.orderFormId) setOrderFormId(cartInfo.orderFormId);
-          // const itemCount = cartInfo?.items?.length || 0;
-          // const total = cartInfo?.totalizers?.[0]?.value || 0;
-          // if(itemCount === 0){
-          //   addMessage("assistant", "Your cart is currently empty.");
-          // } else {
-          //   addMessage("assistant", `Your cart has ${itemCount} item(s). Total: ₹${(total / 100).toFixed(2)}. Say 'checkout' to proceed to payment.`);
-          // }
           if(data?.message){
             addMessage("assistant", data.message);
           }else {
@@ -174,21 +174,42 @@ export default function Home() {
           break;
         }
 
-        case "login": {
-          addMessage("system", "Please login to continue.");
-          setActivePanel("login");
-          break;
-        }
-
         case "checkout":
         case "proceed_to_checkout": {
-          if (!user) {
-            addMessage("system", "Please login first to proceed with checkout.");
-            setActivePanel("login");
-          } else {
-            addMessage("system", "Proceeding to payment...");
-            setActivePanel("payment");
+          // Parse cart payload if present (may be empty)
+          let cartData = data.data?.content?.[0]?.text
+            ? JSON.parse(data.data.content[0].text)
+            : data.data;
+
+          // Prefer explicit backend flag or items array to determine if cart has content
+          let hasItems = (Array.isArray(cartData?.items) && cartData.items.length > 0) || cartData?.hasItems === true;
+
+          // If the current payload has no items, try to fetch the cached orderForm from server-side Redis using sessionId
+          if (!hasItems) {
+            const cached = await fetchCachedOrderForm(getSessionId());
+            if (cached) {
+              const cachedHasItems = (Array.isArray(cached?.items) && cached.items.length > 0) || cached?.hasItems === true;
+              if (cachedHasItems) {
+                cartData = cached;
+                hasItems = true;
+              } else if (cached?.message) {
+                addMessage("assistant", cached.message);
+                break;
+              }
+            }
           }
+
+          if (!hasItems) {
+            const msg = cartData?.message || data.message || "Your cart is empty. Add items before proceeding to checkout.";
+            addMessage("assistant", msg);
+            break;
+          }
+
+          console.log(cartData);
+          // Ready to proceed: ensure cart/orderFormId is stored and render client details inside chat
+          setCart(cartData);
+          if (cartData?.orderFormId) setOrderFormId(cartData.orderFormId);
+          addMessage("assistant", "Proceeding to checkout — please provide client details below.", { render: "clientDetails" }, "payment");
           break;
         }
 
@@ -333,7 +354,13 @@ export default function Home() {
       <main className="flex-1 flex">
         <div className="flex-1 flex flex-col bg-white dark:bg-gray-900">
           {activePanel === "chat" && (
-            <ChatWindow messages={messages} onSend={handleSend} isLoading={isLoading} />
+            <ChatWindow
+              messages={messages}
+              onSend={handleSend}
+              isLoading={isLoading}
+              onClientSaved={() => addMessage("assistant", "Please complete order details below.", { render: "checkoutForm" }, "payment")}
+              onCheckoutComplete={(data) => addMessage("assistant", "Cart is ready with your preferences — would you like to place the order?")}
+            />
           )}
           {activePanel === "login" && (
             <LoginPanel
@@ -345,6 +372,7 @@ export default function Home() {
           {activePanel === "payment" && (
             <div className="p-4 flex flex-col gap-4">
               <ClientDetails />
+              <CheckoutB2BForm />
               <PaymentPanel
                 orderFormId={orderFormId}
                 cartTotal={cartTotal}

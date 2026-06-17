@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import ClientDetails from "@/components/ClientDetails";
+import CheckoutB2BForm from "@/components/CheckoutB2BForm";
 
 interface Message {
   id: string;
@@ -14,9 +16,11 @@ interface ChatWindowProps {
   messages: Message[];
   onSend: (message: string) => void;
   isLoading: boolean;
+  onClientSaved?: () => void;
+  onCheckoutComplete?: (data: any) => void;
 }
 
-export default function ChatWindow({ messages, onSend, isLoading }: ChatWindowProps) {
+export default function ChatWindow({ messages, onSend, isLoading, onClientSaved, onCheckoutComplete }: ChatWindowProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -75,6 +79,16 @@ export default function ChatWindow({ messages, onSend, isLoading }: ChatWindowPr
                     </button>
                   ))}
                 </div>
+              </div>
+            ) : msg.type === "payment" && msg.data?.render === "clientDetails" ? (
+              <div className="max-w-[80%] rounded-2xl px-4 py-2.5 bg-gray-50 dark:bg-gray-800">
+                <div className="text-sm mb-2">Client details</div>
+                <ClientDetails onSaved={onClientSaved} />
+              </div>
+            ) : msg.type === "payment" && msg.data?.render === "checkoutForm" ? (
+              <div className="max-w-[80%] rounded-2xl px-4 py-2.5 bg-gray-50 dark:bg-gray-800">
+                <div className="text-sm mb-2">Checkout</div>
+                <CheckoutB2BForm onSubmit={(d) => onCheckoutComplete?.(d)} />
               </div>
             ) : (
               <div

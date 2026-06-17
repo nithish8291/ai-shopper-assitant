@@ -3,7 +3,7 @@ import { executeLoop } from "@/agents/executor/index";
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, sessionId, context } = await req.json();
+    const { message, sessionId, context, meta } = await req.json();
     
     if (!message) {
       return NextResponse.json(
@@ -58,12 +58,12 @@ export async function POST(req: NextRequest) {
             "I can add a new address for you if you'd like to provide the details.",
             "You can also edit an existing address before confirming shipping.",
           ];
-        case "proceed_to_checkout":
-          return [
-            "You're ready to checkout — enter your payment details to continue.",
-            "Choose a shipping method and review the order summary before placing the order.",
-            "Need to update billing or shipping information? You can do that now.",
-          ];
+        // case "proceed_to_checkout":
+        //   return [
+        //     "You're ready to checkout — enter your payment details to continue.",
+        //     "Choose a shipping method and review the order summary before placing the order.",
+        //     "Need to update billing or shipping information? You can do that now.",
+        //   ];
         case "set_client_profile":
           return [
             "Your profile was updated — review and confirm the information.",
@@ -92,6 +92,8 @@ export async function POST(req: NextRequest) {
           return [];
       }
     };
+
+    
 
     return NextResponse.json({
       success: result.success,

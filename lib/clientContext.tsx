@@ -9,9 +9,6 @@ export type ClientDetails = {
   phone: string | null;
   corporateName: string | null;
   corporateDocument: string | null;
-  tradeName: string;
-  stateInscription: string;
-  corporatePhone: string;
   isCorporate: boolean;
 };
 
@@ -27,10 +24,7 @@ const defaultClient: ClientDetails = {
   phone: null,
   corporateName: null,
   corporateDocument: null,
-  tradeName: "",
-  stateInscription: "",
-  corporatePhone: "",
-  isCorporate: true,
+  isCorporate: false,
 };
 
 const ClientContext = createContext<ClientContextType | undefined>(undefined);

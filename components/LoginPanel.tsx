@@ -18,10 +18,10 @@ export default function LoginPanel({ storeUrl, onLoginSuccess, isEmbedded = fals
 
   const getSessionId = () => {
     if (typeof window === "undefined") return "server-session";
-    let id = sessionStorage.getItem("shopping-session-id");
+    let id = localStorage.getItem("shopping-session-id");
     if (!id) {
       id = uuid();
-      sessionStorage.setItem("shopping-session-id", id);
+      localStorage.setItem("shopping-session-id", id);
     }
     return id;
   }

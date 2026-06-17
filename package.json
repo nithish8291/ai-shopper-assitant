@@ -11,6 +11,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.71",
     "@google/genai": "^1.46.0",
+    "@hookform/resolvers": "^5.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@upstash/redis": "^1.38.0",
     "ai": "^6.0.205",

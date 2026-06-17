@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useClient, ClientDetails as ClientDetailsType } from "@/lib/clientContext";
 
-export default function ClientDetails() {
+export default function ClientDetails({ onSaved }: { onSaved?: () => void }) {
   const { client, setClient } = useClient();
   const [form, setForm] = useState<ClientDetailsType>(
     (client as ClientDetailsType) ?? {
@@ -13,9 +13,6 @@ export default function ClientDetails() {
       phone: null,
       corporateName: null,
       corporateDocument: null,
-      tradeName: "",
-      stateInscription: "",
-      corporatePhone: "",
       isCorporate: true,
     }
   );
@@ -27,7 +24,8 @@ export default function ClientDetails() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setClient(form);
-    alert("Client details saved.");
+    if (onSaved) onSaved();
+    else alert("Client details saved.");
   };
 
   return (
@@ -76,35 +74,6 @@ export default function ClientDetails() {
           onChange={(e) => update("corporateDocument", e.target.value || null)}
           className="border p-2 rounded"
         />
-        <input
-          placeholder="Corporate phone"
-          value={form.corporatePhone ?? ""}
-          onChange={(e) => update("corporatePhone", e.target.value)}
-          className="border p-2 rounded"
-        />
-        <input
-          placeholder="Trade name"
-          value={form.tradeName ?? ""}
-          onChange={(e) => update("tradeName", e.target.value)}
-          className="border p-2 rounded"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          placeholder="State inscription"
-          value={form.stateInscription ?? ""}
-          onChange={(e) => update("stateInscription", e.target.value)}
-          className="border p-2 rounded"
-        />
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={!!form.isCorporate}
-            onChange={(e) => update("isCorporate", e.target.checked)}
-          />
-          <span>Is corporate</span>
-        </label>
       </div>
 
       <div className="flex items-center gap-2">
@@ -122,10 +91,7 @@ export default function ClientDetails() {
               phone: null,
               corporateName: null,
               corporateDocument: null,
-              tradeName: "",
-              stateInscription: "",
-              corporatePhone: "",
-              isCorporate: true,
+              isCorporate: false,
             } });
           }}
         >

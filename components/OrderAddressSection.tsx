@@ -10,7 +10,7 @@ type Props = {
 };
 
 export default function OrderAddressSection({ companyPrefix = "companyAddress", orderPrefix = "orderAddress" }: Props) {
-  const { watch, getValues, setValue } = useFormContext();
+  const { watch, getValues, setValue, register } = useFormContext();
 
   const same = watch("orderAddressSameAsCompany");
 
@@ -28,7 +28,7 @@ export default function OrderAddressSection({ companyPrefix = "companyAddress", 
   return (
     <div className="space-y-3">
       <label className="flex items-center gap-2">
-        <input type="checkbox" {...({ name: "orderAddressSameAsCompany" } as any)} />
+        <input type="checkbox" {...register("orderAddressSameAsCompany")} />
         <span>Order address is same as company address</span>
       </label>
 

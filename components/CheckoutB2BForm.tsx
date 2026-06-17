@@ -8,20 +8,8 @@ import AddressForm, { AddressShape } from "@/components/AddressForm";
 import OrderAddressSection from "@/components/OrderAddressSection";
 import PaymentMethods from "@/components/PaymentMethods";
 import { useClient } from "@/lib/clientContext";
-
-const FUNCTIONAL_AREA_OPTIONS = [
-  { value: "sales", label: "Sales" },
-  { value: "procurement", label: "Procurement" },
-  { value: "it", label: "IT" },
-  { value: "finance", label: "Finance" },
-];
-
-const JOB_TITLE_OPTIONS = [
-  { value: "manager", label: "Manager" },
-  { value: "director", label: "Director" },
-  { value: "vp", label: "VP" },
-  { value: "c_level", label: "C-level" },
-];
+import { FUNCTIONAL_AREA_OPTIONS } from "@/lib/functionalArea";
+import { JOB_TITLE_OPTIONS } from "@/lib/jobTitle";
 
 const AddressSchema = z.object({
   addressLine: z.string().nullable(),
@@ -72,7 +60,7 @@ export default function CheckoutB2BForm({ onSubmit }: { onSubmit?: (data: FormVa
         stateVtexValue: null,
         ext: null,
       },
-      orderAddressSameAsCompany: true,
+      orderAddressSameAsCompany: false,
       orderAddress: {
         addressLine: null,
         addressLineSecond: null,
@@ -104,9 +92,39 @@ export default function CheckoutB2BForm({ onSubmit }: { onSubmit?: (data: FormVa
   const functionalOptions = useMemo(() => FUNCTIONAL_AREA_OPTIONS, []);
   const jobOptions = useMemo(() => JOB_TITLE_OPTIONS, []);
 
-  const submit = (data: FormValues) => {
+  const submit = async (data: FormValues) => {
     // attach client.customer if available
     if (client?.client) data.customer = client.client;
+
+    // Enrich delivery selections from cached orderForm if missing
+    try {
+      if (!data.selectedDeliveryChannel || !data.selectedSla) {
+        const sessionId = typeof window !== "undefined" ? localStorage.getItem("shopping-session-id") : null;
+        if (sessionId) {
+          const res = await fetch(`/api/orderform?sessionId=${encodeURIComponent(sessionId)}`);
+          if (res.ok) {
+            const body = await res.json();
+            const of = body?.orderForm ?? body;
+            const orderForm = of?.response ?? of;
+            const logistics = orderForm?.shippingData?.logisticsInfo;
+            const first = Array.isArray(logistics) && logistics.length > 0 ? logistics[0] : null;
+            if (first) {
+              if (!data.selectedDeliveryChannel && first.selectedDeliveryChannel) {
+                data.selectedDeliveryChannel = first.selectedDeliveryChannel;
+                setValue("selectedDeliveryChannel", first.selectedDeliveryChannel);
+              }
+              if (!data.selectedSla && first.selectedSla) {
+                data.selectedSla = first.selectedSla;
+                setValue("selectedSla", first.selectedSla);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to enrich checkout form from orderForm:", err);
+    }
+
     console.log("B2B form result:", data);
     onSubmit?.(data);
   };
@@ -123,26 +141,22 @@ export default function CheckoutB2BForm({ onSubmit }: { onSubmit?: (data: FormVa
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <label className="flex flex-col">
             <span className="text-sm">Functional area</span>
-            <input
-              list="functional-list"
-              {...register("functionalArea")}
-              className="border rounded p-2"
-            />
-            <datalist id="functional-list">
+            <select {...register("functionalArea")} className="border rounded p-2">
+              <option value="">Select functional area</option>
               {functionalOptions.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </datalist>
+            </select>
           </label>
 
           <label className="flex flex-col">
             <span className="text-sm">Job title</span>
-            <input list="job-list" {...register("jobTitle")} className="border rounded p-2" />
-            <datalist id="job-list">
+            <select {...register("jobTitle")} className="border rounded p-2">
+              <option value="">Select job title</option>
               {jobOptions.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </datalist>
+            </select>
           </label>
         </div>
 

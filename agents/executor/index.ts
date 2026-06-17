@@ -7,6 +7,9 @@ import {
 } from "@/lib/shopping-memory";
 import { generateCartAnswerAgent, generateProductAnswerAgent, runIntentAgent } from "@/agents/planner/index";
 import { ToolCallResult } from "@/agents/types/type";
+import { Redis } from "@upstash/redis";
+
+const redis = Redis.fromEnv();
 
 const VALID_TOOLS = [
   "search_products",
@@ -211,9 +214,31 @@ export async function executeLoop(
     console.log("----------------------toolResult");
     console.log(toolResult);
 
+    // Persist order form-like results to Redis under key `orderform:${sessionId}`
+   
     if(toolResult?.isError) {
       continue;
     }
+    
+     try {
+      const relevantTools = ["add_item_to_cart", "update_item_in_cart", "get_cart", "create_new_cart"];
+      if (relevantTools.includes(toolCall.tool || "")) {
+        const content = toolResult?.content;
+        let raw: string | null = null;
+        if (Array.isArray(content) && content[0]?.text) {
+          raw = content[0].text;
+        } else {
+          raw = typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult);
+        }
+
+        if (raw) {
+          await redis.set(`orderform:${sessionId}`, raw);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed saving order form to Redis:", err);
+   }
+
     
     const step: ExecutionStep = {
       tool: toolCall.tool || "",
@@ -278,6 +303,8 @@ export async function executeLoop(
         // ignore parse errors
       }
     }
+
+
 
     if (toolCall.nextAction === "generate_product_answer") {
       finalMessage = await generateProductAnswerAgent(
