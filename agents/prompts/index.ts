@@ -54,6 +54,9 @@ export const buildProductAnswerPrompt = (userInput: string, product: Product): s
       - description
       - FAQ
       - specifications
+      - details from the product information provided below.
+
+       Do not use any information that is not included in the product details.
 
       Product:
       ${productStr}
@@ -64,9 +67,37 @@ export const buildProductAnswerPrompt = (userInput: string, product: Product): s
       Generate a concise and helpful answer
 
       When action is answer_from_context:
-        - Generate response_message using description, FAQ and specifications.
+        - Generate response_message using description, FAQ, specifications, and details from the product information provided.
         - Do not return placeholder text like:
           "Fetching details..."
         - Return the final user-facing answer.
       `
+}
+
+
+export const buildCartAnswerPrompt = (userInput: string, cart: any): string => {
+  const cartStr = JSON.stringify(cart, null, 2);
+  return `
+      You are a cart assistant. 
+      Answer the user's question using ONLY the cart information provided below.
+      Do not use any information that is not included in the cart details.
+
+      Cart:
+      ${cartStr}  
+      
+      User Question:
+      ${userInput}
+
+      Rules : 
+
+      - If the cart is empty, respond with "Your cart is currently empty."
+      - If the cart has items, provide a summary of the items, their quantities, and total price.
+      - If the user asks about a specific item, provide details about that item from the cart.
+      - If the user asks about checkout, provide instructions on how to proceed to checkout.
+      - If the user asks about the shipping address, provide the shipping address from the cart.
+      - If the user ask about items in the cart, provide the list of items in the cart with their quantities and prices.
+      - Ignore rest of the request with message as not authorized to provide this information about the cart.
+      Send clean styled response without any extra text or explanations.
+      Generate a concise and helpful answer
+      `;
 }

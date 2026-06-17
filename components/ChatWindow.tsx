@@ -7,7 +7,7 @@ interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   data?: any;
-  type?: "text" | "products" | "cart" | "login" | "payment" | "order";
+    type?: "text" | "products" | "cart" | "login" | "payment" | "order" | "suggestions";
 }
 
 interface ChatWindowProps {
@@ -43,7 +43,7 @@ export default function ChatWindow({ messages, onSend, isLoading }: ChatWindowPr
               Ask me to search products, add to cart, or help with checkout!
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {["Search for shoes", "Show my cart", "Help me checkout"].map((suggestion) => (
+              {["Search for GS1 Products", "Show my cart", "Help me checkout"].map((suggestion) => (
                 <button
                   key={suggestion}
                   onClick={() => onSend(suggestion)}
@@ -61,17 +61,34 @@ export default function ChatWindow({ messages, onSend, isLoading }: ChatWindowPr
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            <div
-              className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
-                msg.role === "user"
-                  ? "bg-blue-600 text-white"
-                  : msg.role === "system"
-                  ? "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-100"
-                  : "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-              }`}
-            >
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-            </div>
+            {msg.type === "suggestions" ? (
+              <div className="max-w-[80%] rounded-2xl px-4 py-2.5 bg-gray-50 dark:bg-gray-800">
+                <div className="text-sm mb-2">Suggestions</div>
+                <div className="flex flex-wrap gap-2">
+                  {Array.isArray(msg.data) && msg.data.map((s: string, i: number) => (
+                    <button
+                      key={i}
+                      onClick={() => onSend(s)}
+                      className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div
+                className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : msg.role === "system"
+                    ? "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-100"
+                    : "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                }`}
+              >
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            )}
           </div>
         ))}
 

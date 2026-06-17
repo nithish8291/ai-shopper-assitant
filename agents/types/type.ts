@@ -26,6 +26,7 @@ export type AgentAction =
 export type NextAction =
   | null
   | "generate_product_answer"
+  | "generate_cart_answer"
   | "get_sku_details"
   | "display_product"
   | "add_to_cart"

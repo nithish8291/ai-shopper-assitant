@@ -40,6 +40,7 @@ Examples:
 - What are the specifications?
 - Is this product waterproof?
 - What is its warranty?
+- Show details for this product
 
 Context Resolution Rules
 

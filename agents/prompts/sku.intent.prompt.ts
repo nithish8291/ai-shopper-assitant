@@ -30,6 +30,7 @@ The user may ask questions such as:
 - "When was iPhone 16 released?"
 - "What services come with PS5?"
 - "Show bundles for Samsung TV"
+- "Show details for SKU 12345"
 
 SKU extraction rules:
 - If the user explicitly provides a SKU ID, extract it into parameters.skuId.
@@ -43,6 +44,7 @@ Tool selection rules:
    - invoke "get_sku_details"
    - set parameters.skuId
    - shouldInvokeTool = true
+   - set nextAction = "answer_from_context"
 
 2. If a product name is present but no SKU ID:
    - invoke "search_products"

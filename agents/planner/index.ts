@@ -2,7 +2,7 @@ import { Product } from "@/lib/shopping-memory";
 import { getLLMProvider } from "../../llm/llm.factory";
 import { PlannerPlan, ToolCallResult } from "../types/type";
 import { parsePlan, parseToolCall } from "./parser";
-import { buildPlannerPrompt, buildProductAnswerPrompt } from "../prompts";
+import { buildCartAnswerPrompt, buildPlannerPrompt, buildProductAnswerPrompt } from "../prompts";
 
 
 export async function generateProductAnswerAgent(
@@ -24,6 +24,29 @@ export async function generateProductAnswerAgent(
 
   throw new Error(
     `Planner agent failed for all configured providers (${providerOrder.join(", ")}). ${failures.join(" | ")}`
+  );
+}
+
+
+export async function generateCartAnswerAgent(
+  userInput: string,
+  cart: any
+): Promise<any> {
+  const prompt = buildCartAnswerPrompt(userInput, cart);
+  const providerOrder = getProviderOrder(process.env.LLM_PROVIDER || "groq");
+  const failures: string[] = [];
+  for (const providerName of providerOrder) {
+    try {
+      const llm = getLLMProvider(providerName);
+      const rawResponse = await llm.generateResponse(prompt);
+      return rawResponse;
+    } catch (error) {
+      failures.push(`${providerName}: ${formatError(error)}`);
+    }
+  }
+
+  throw new Error(
+    `Cart answer agent failed for all configured providers (${providerOrder.join(", ")}). ${failures.join(" | ")}`
   );
 }
 

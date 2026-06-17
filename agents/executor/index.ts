@@ -5,7 +5,7 @@ import {
   getShoppingContext,
   updateShoppingContext,
 } from "@/lib/shopping-memory";
-import { generateProductAnswerAgent, runIntentAgent } from "@/agents/planner/index";
+import { generateCartAnswerAgent, generateProductAnswerAgent, runIntentAgent } from "@/agents/planner/index";
 import { ToolCallResult } from "@/agents/types/type";
 
 const VALID_TOOLS = [
@@ -13,6 +13,7 @@ const VALID_TOOLS = [
   "get_sku_details",
   "create_new_cart",
   "get_cart",
+  "add_item_to_cart",
   "update_item_in_cart",
   "get_address_options",
   "proceed_to_checkout",
@@ -22,7 +23,7 @@ const VALID_TOOLS = [
   "place_order"
 ];
 
-const MAX_STEPS = 5;
+const MAX_STEPS = 1;
 
 
 const sanitizeParameters =(
@@ -66,7 +67,7 @@ function resolveProductFromContext(
     );
   }
 
-  return context.selectedProduct;
+  return undefined;
 }
 
 /**
@@ -101,10 +102,6 @@ export async function executeLoop(
       steps,
       lastToolResult
     );
-
-    console.log("--------------------enrichedContext");
-    
-    console.log(enrichedContext);
     
     // Run intent agent with full context
     const toolCall = await runIntentAgent(currentMessage, enrichedContext);
@@ -166,7 +163,7 @@ export async function executeLoop(
     if (
       toolCall.action === "display_product"
     ) {
-      const product = resolveProductFromContext(
+      const product = resolveProductFromContext( 
         shoppingContext,
         parameters
       );
@@ -193,6 +190,8 @@ export async function executeLoop(
       };
     }
 
+    console.log("---------------------toolRes");
+    
     // Execute the tool
     let toolResult: any;
     try {
@@ -209,11 +208,12 @@ export async function executeLoop(
       };
     }
 
+    console.log("----------------------toolResult");
+    console.log(toolResult);
+
     if(toolResult?.isError) {
       continue;
     }
-    console.log("----------------------toolResult");
-    console.log(toolResult);
     
     const step: ExecutionStep = {
       tool: toolCall.tool || "",
@@ -239,6 +239,46 @@ export async function executeLoop(
 
     finalMessage = toolCall.response_message;
 
+
+    // If this was an add_item_to_cart call, extract skuId and quantity from parameters
+    // and try to find the corresponding item in the returned order/cart to build a simplified addedItem
+    if (toolCall.tool === "add_item_to_cart") {
+      try {
+        const skuParam = String(parameters.skuId ?? parameters.sku ?? "");
+        const qtyParam = Number(parameters.quantity ?? parameters.qty ?? parameters.qtd ?? 1);
+
+        const content = (toolResult as any)?.content;
+        let parsed: any = toolResult; 
+        if (Array.isArray(content) && content[0]?.text) {
+          parsed = JSON.parse(content[0].text);
+        }
+
+        const items = parsed?.items || parsed?.order?.items || parsed?.orderForm?.items || [];
+        if (Array.isArray(items) && items.length > 0) {
+          // try to find by sku
+          const found = items.find((it: any) => {
+            const candidateSku = String(it.skuId || it.id || it.itemId || it.productId || "");
+            return candidateSku === skuParam || skuParam === "";
+          });
+
+          if (found) {
+            const addedItem = {
+              name: found.name || found.productName || found.itemName || found.title || null,
+              price: (found.sellingPrice ?? found.price ?? found.unitPrice ?? null),
+              quantity: (found.quantity ?? found.qty ?? qtyParam)
+            };
+            toolResult.content[0].text = JSON.stringify({
+              orderFormId: parsed?.orderFormId || parsed?.id || null,
+              addedItem
+            });
+            finalMessage = `Added ${addedItem.quantity} x ${addedItem.name} to your cart.`;
+          }
+        }
+      } catch (err) {
+        // ignore parse errors
+      }
+    }
+
     if (toolCall.nextAction === "generate_product_answer") {
       finalMessage = await generateProductAnswerAgent(
         userMessage,
@@ -246,6 +286,15 @@ export async function executeLoop(
       );
       break;
     }
+
+    if (toolCall.nextAction === "generate_cart_answer") {
+      finalMessage = await generateCartAnswerAgent(
+        userMessage,
+        toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text) : []
+      );
+      break;
+    }
+    
     // Determine if we need another step (e.g., auto-creating cart before adding item)
     const nextAction = determineNextStep(toolCall.tool || "", toolResult, shoppingContext);
     if (!nextAction) {
@@ -275,23 +324,20 @@ function buildEnrichedContext(
 ): Record<string, unknown> {
   const context: Record<string, unknown> = {
     orderFormId: shoppingContext.orderFormId || null,
-    cartId: shoppingContext.cartId || null,
     selectedSkuId: shoppingContext.selectedSku || null,
   };
 
   if (shoppingContext.selectedProduct) {
     context.selectedProduct = shoppingContext.selectedProduct;
   }
-
-  console.log("---------------------shopping context");
-  
-  console.log(shoppingContext);
   
   if (shoppingContext.lastProducts?.length) {
     context.lastProducts = shoppingContext.lastProducts.map((p) => ({
       productId: p?.productId,
       productName: p?.productName,
       skuId: p?.defaultSku[0]?.skuId,
+      defaultSku: p?.defaultSku,
+      skuOptions: p?.skuOptions
     }));
   }
 
@@ -368,8 +414,8 @@ function resolveParameters(
   }
 
   // Inject sellerId from selected product
-  if (!params.sellerId && shoppingContext.selectedProduct?.defaultSku[0]?.seller) {
-    params.sellerId = shoppingContext.selectedProduct.defaultSku[0].seller;
+  if (!params.sellerId && shoppingContext.selectedProduct?.seller) {
+    params.sellerId = shoppingContext.selectedProduct.seller;
   }
 
   return params;
@@ -429,16 +475,15 @@ async function updateContextFromResult(
     case "get_sku_details": {
       const product = extractProduct(res);
       if (product) {
-        patch.selectedProduct = product;
+        patch.selectedProduct = product.defaultSku[0];
         patch.selectedSku = product.defaultSku[0]?.skuId;
       }
       break;
     }
-    case "create_new_cart": {
+    case "add_item_to_cart": {
       const orderFormId = extractOrderFormId(res);
       if (orderFormId) {
         patch.orderFormId = orderFormId;
-        patch.cartId = orderFormId;
       }
       break;
     }

@@ -51,7 +51,7 @@ Rules:
 - quantity (default to 1 if omitted)
 
 3. If skuId is not explicitly provided:
-- Set skuId to null.
+- Set skuId - match the name from defaultSku or skuOptions.
 - The application will resolve it from context.
 
 4. If orderFormId exists in context:
@@ -77,7 +77,7 @@ Rules:
 Parameters for add_item_to_cart:
 
 {
-  "id": skuId,
+  "skuId": skuId,
   "quantity": quantity,
   "seller": seller,
   "index": index,
@@ -85,7 +85,7 @@ Parameters for add_item_to_cart:
 }
 
 Rules:
-- id represents skuId.
+- skuId represents the SKU identifier.
 - quantity defaults to 1.
 - seller may be null.
 - index may be null.
@@ -108,7 +108,7 @@ Return:
   "intent": "view_cart",
   "action": "invoke_tool",
   "tool": "get_cart",
-  "nextAction": "",
+  "nextAction": "generate_cart_answer",
   "shouldInvokeTool": true
 }
 

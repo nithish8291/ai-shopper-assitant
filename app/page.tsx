@@ -5,6 +5,8 @@ import ChatWindow from "@/components/ChatWindow";
 import LoginPanel from "@/components/LoginPanel";
 import PaymentPanel from "@/components/PaymentPanel";
 import ProductCard from "@/components/Productcard";
+import { ClientProvider } from "@/lib/clientContext";
+import ClientDetails from "@/components/ClientDetails";
 import { v4 as uuid } from "uuid";
 
 interface Message {
@@ -12,7 +14,7 @@ interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   data?: any;
-  type?: "text" | "products" | "cart" | "login" | "payment" | "order";
+    type?: "text" | "products" | "cart" | "login" | "payment" | "order" | "suggestions";
 }
 
 type ActivePanel = "chat" | "login" | "payment";
@@ -50,7 +52,7 @@ export default function Home() {
     return id;
   }
 
-  const handleSend = async (message: string) => {
+  const handleSend = async (message: string, meta?: any) => {
     addMessage("user", message);
     setIsLoading(true);
 
@@ -60,6 +62,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message,
+          meta: meta ?? null,
           context: {
             orderFormId,
             user,
@@ -119,19 +122,55 @@ export default function Home() {
             : data.data;
           setCart(cartData);
           if (cartData?.orderFormId) setOrderFormId(cartData.orderFormId);
-          addMessage("assistant", "Added to cart! Say 'show my cart' to view or 'checkout' to proceed.");
+          // Prefer structured addedItem returned by the executor/tool result
+          const added = data.data?.addedItem ?? data.data?.result?.addedItem ?? null;
+          if (added && added.name) {
+            const priceText = added.price != null ? ` — $${(Number(added.price) / 100).toFixed(2)}` : "";
+            const qtyText = added.quantity != null ? ` (x${added.quantity})` : "";
+            addMessage("assistant", `Item added successfully to the cart: ${added.name}${qtyText}${priceText}`);
+          } else {
+            // Fallback: try to infer the added item from the returned cart structure (pick the last item)
+            let inferredName: string | null = null;
+            let inferredPrice: number | null = null;
+            try {
+              const items = cartData?.items || cartData?.order?.items || cartData?.orderForm?.items || [];
+              if (Array.isArray(items) && items.length > 0) {
+                const last = items[items.length - 1];
+                inferredName = last?.name || last?.productName || last?.title || null;
+                inferredPrice = (last?.sellingPrice ?? last?.price ?? last?.unitPrice) ?? null;
+              }
+            } catch (err) {
+              // ignore
+            }
+
+            if (inferredName) {
+              const priceText = inferredPrice != null ? ` — $${(Number(inferredPrice) / 100).toFixed(2)}` : "";
+              addMessage("assistant", `Item added successfully to the cart: ${inferredName}${priceText}`);
+            } else {
+              addMessage("assistant", "Added to cart! Say 'show my cart' to view or 'checkout' to proceed.");
+            }
+          }
           break;
         }
-
+        case "view_cart":
         case "get_cart": {
-          const cartInfo = data.data?.content?.[0]?.text
-            ? JSON.parse(data.data.content[0].text)
-            : data.data;
-          setCart(cartInfo);
-          if (cartInfo?.orderFormId) setOrderFormId(cartInfo.orderFormId);
-          const itemCount = cartInfo?.items?.length || 0;
-          const total = cartInfo?.totalizers?.[0]?.value || 0;
-          addMessage("assistant", `Your cart has ${itemCount} item(s). Total: ₹${(total / 100).toFixed(2)}. Say 'checkout' to proceed to payment.`);
+          // const cartInfo = data.data?.content?.[0]?.text
+          //   ? JSON.parse(data.data.content[0].text)
+          //   : data.data;
+          // setCart(cartInfo);
+          // if (cartInfo?.orderFormId) setOrderFormId(cartInfo.orderFormId);
+          // const itemCount = cartInfo?.items?.length || 0;
+          // const total = cartInfo?.totalizers?.[0]?.value || 0;
+          // if(itemCount === 0){
+          //   addMessage("assistant", "Your cart is currently empty.");
+          // } else {
+          //   addMessage("assistant", `Your cart has ${itemCount} item(s). Total: ₹${(total / 100).toFixed(2)}. Say 'checkout' to proceed to payment.`);
+          // }
+          if(data?.message){
+            addMessage("assistant", data.message);
+          }else {
+            addMessage("assistant", "No cart information available.");
+          }
           break;
         }
 
@@ -168,6 +207,48 @@ export default function Home() {
           addMessage("assistant", text);
         }
       }
+
+      // If the assistant returned suggestions array, add them as a suggestions message
+      if (Array.isArray(data.suggestions) && data.suggestions.length > 0) {
+        let suggestions = [...data.suggestions];
+
+        // If intent is search_products but no products were returned, remove the generic 'found several products' suggestion
+        if (data.intent === "search_products") {
+          const productList = data.data?.content?.[0]?.text
+            ? JSON.parse(data.data.content[0].text)
+            : data.data;
+          const hasProducts = Array.isArray(productList) && productList.length > 0;
+          if (!hasProducts) {
+            suggestions = suggestions.filter((s: string) => {
+              return (
+                s !==
+                "I found several matching products — would you like to view details for any of them?" &&
+                s !== "You can add a product to your cart directly from the listing."
+              );
+            });
+          }
+        }
+        // If intent is get_cart and the cart is empty, remove cart-related suggestions
+        if (data.intent === "get_cart") {
+          const cartInfo = data.data?.content?.[0]?.text
+            ? JSON.parse(data.data.content[0].text)
+            : data.data;
+          const itemCount = cartInfo?.items?.length || 0;
+          if (itemCount === 0) {
+            suggestions = suggestions.filter((s: string) => {
+              return (
+                s !== "This is your current cart — you can update item quantities or remove items." &&
+                s !== "When you're ready, proceed to checkout to enter shipping and payment details." &&
+                s !== "You can also apply a coupon code or estimate shipping costs."
+              );
+            });
+          }
+        }
+
+        if (suggestions.length > 0) {
+          addMessage("assistant", "", suggestions, "suggestions");
+        }
+      }
     } catch (error) {
       addMessage("assistant", "Sorry, I encountered an error. Please try again.");
     } finally {
@@ -187,12 +268,14 @@ export default function Home() {
     setCart(null);
   };
 
-  const handleAddToCart = (skuId: string) => {
-    handleSend(`Add to cart SKU: ${skuId}`);
+  const handleAddToCart = (skuId: string, displayName?: string) => {
+    const userMessage = displayName ? `Add to cart: ${displayName}` : `Add to cart`;
+    handleSend(userMessage, { action: "add_to_cart", skuId });
   };
 
-  const handleViewDetails = (skuId: string) => {
-    handleSend(`Get SKU details: ${skuId}`);
+  const handleViewDetails = (skuId: string, displayName?: string) => {
+    const userMessage = displayName ? `Show details: ${displayName}` : `Show details`;
+    handleSend(userMessage, { action: "get_sku_details", skuId });
   };
 
   const cartTotal = cart?.totalizers?.[0]?.value
@@ -200,7 +283,8 @@ export default function Home() {
     : 0;
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
+    <ClientProvider>
+      <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
       <aside className="w-16 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col items-center py-4 gap-4">
         <button
@@ -259,12 +343,15 @@ export default function Home() {
             />
           )}
           {activePanel === "payment" && (
-            <PaymentPanel
-              orderFormId={orderFormId}
-              cartTotal={cartTotal}
-              onPaymentComplete={handlePaymentComplete}
-              storeUrl={STORE_URL}
-            />
+            <div className="p-4 flex flex-col gap-4">
+              <ClientDetails />
+              <PaymentPanel
+                orderFormId={orderFormId}
+                cartTotal={cartTotal}
+                onPaymentComplete={handlePaymentComplete}
+                storeUrl={STORE_URL}
+              />
+            </div>
           )}
         </div>
 
@@ -293,6 +380,7 @@ export default function Home() {
           </div>
         )}
       </main>
-    </div>
+      </div>
+    </ClientProvider>
   );
 }

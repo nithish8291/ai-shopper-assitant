@@ -27,7 +27,7 @@ export interface Product {
 export interface ShoppingContext {
   cartId?: string;
   lastProducts?: Product[];
-  selectedProduct?: Product;
+  selectedProduct?: ProductSkuDTO;
   selectedSku?: string;
   orderFormId?: string;
 }
