@@ -17,6 +17,7 @@
     "ai": "^6.0.205",
     "country-state-city": "^3.2.1",
     "groq-sdk": "^1.1.1",
+    "i18n-iso-countries": "^7.14.0",
     "next": "16.2.9",
     "openai": "^6.32.0",
     "react": "19.2.4",

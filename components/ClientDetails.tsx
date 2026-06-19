@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useClient, ClientDetails as ClientDetailsType } from "@/lib/clientContext";
 
-export default function ClientDetails({ onSaved }: { onSaved?: () => void }) {
+export default function ClientDetails({ onSaved }: { onSaved?: (data: ClientDetailsType) => void }) {
   const { client, setClient } = useClient();
   const [form, setForm] = useState<ClientDetailsType>(
     (client as ClientDetailsType) ?? {
@@ -24,7 +24,7 @@ export default function ClientDetails({ onSaved }: { onSaved?: () => void }) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setClient(form);
-    if (onSaved) onSaved();
+    if (onSaved) onSaved(form);
     else alert("Client details saved.");
   };
 

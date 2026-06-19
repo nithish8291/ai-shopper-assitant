@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import ChatWindow from "@/components/ChatWindow";
 import LoginPanel from "@/components/LoginPanel";
 import PaymentPanel from "@/components/PaymentPanel";
@@ -15,7 +15,7 @@ interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   data?: any;
-    type?: "text" | "products" | "cart" | "login" | "payment" | "order" | "suggestions";
+    type?: "text" | "products" | "cart" | "login" | "payment" | "order" | "suggestions" | "checkout_url";
 }
 
 type ActivePanel = "chat" | "login" | "payment";
@@ -30,6 +30,23 @@ export default function Home() {
   const [products, setProducts] = useState<any[]>([]);
   const [cart, setCart] = useState<any>(null);
   const [orderFormId, setOrderFormId] = useState<string>("");
+  const [clientDetailsData, setClientDetailsData] = useState<any>(null);
+  const [checkoutB2bData, setCheckoutB2bData] = useState<any>(null);
+
+  const CLIENT_STORAGE_KEY = "ai_shop_clientDetails";
+  const B2B_STORAGE_KEY = "ai_shop_checkoutB2b";
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const storedClient = localStorage.getItem(CLIENT_STORAGE_KEY);
+      if (storedClient) setClientDetailsData(JSON.parse(storedClient));
+      const storedB2b = localStorage.getItem(B2B_STORAGE_KEY);
+      if (storedB2b) setCheckoutB2bData(JSON.parse(storedB2b));
+    } catch (err) {
+      console.warn("Failed to load saved client/B2B data:", err);
+    }
+  }, []);
 
   const addMessage = useCallback((role: Message["role"], content: string, data?: any, type?: Message["type"]) => {
     const msg: Message = {
@@ -80,20 +97,24 @@ export default function Home() {
             user,
             selectedProductId: products[0]?.id,
           },
+          clientDetails: clientDetailsData,
+          customerData: checkoutB2bData,
           sessionId: getSessionId(),
         }),
       });
 
       const data = await res.json();
 
+      console.log("-------------------data")
+      console.log(JSON.stringify(data,null,2));
+
       if (!data.success) {
-        addMessage("assistant", data.error || "Sorry, something went wrong.");
+        addMessage("assistant", data.message ||data.error || "Sorry, something went wrong.");
         setIsLoading(false);
         return;
       }
 
-      console.log("-------------------data")
-      console.log(JSON.stringify(data,null,2));
+      
       
       switch (data.intent) {
         case "search_products": {
@@ -223,7 +244,23 @@ export default function Home() {
           break;
         }
 
+        case "complete_payment": {
+          const paymentResult = data.data?.content?.[0]?.text
+            ? JSON.parse(data.data.content[0].text)
+            : data.data;
+          addMessage(
+            "assistant",
+            "Complete the payment process to finalize your order.",
+            { checkoutUrl: paymentResult?.checkoutUrl ?? null },
+            "checkout_url"
+          );
+          setCart(null);
+          setProducts([]);
+          break;
+        }
+
         default: {
+
           const text = data.message || data.data?.content?.[0]?.text || JSON.stringify(data.data);
           addMessage("assistant", text);
         }
@@ -275,6 +312,57 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleClientSaved = (data: any) => {
+    setClientDetailsData(data);
+    addMessage("system", "Client details saved.");
+    try {
+      localStorage.setItem(CLIENT_STORAGE_KEY, JSON.stringify(data));
+    } catch (err) {
+      console.warn("Failed to persist client data:", err);
+    }
+    // After saving client details, render the checkout/shipping form inside chat
+    addMessage("assistant", "Please complete shipping & order address below.", { render: "checkoutForm" }, "payment");
+  };
+
+  const handleB2BSubmit = async (data: any) => {
+    console.log("-----------------test");
+    
+    setCheckoutB2bData(data);
+    addMessage("system", "B2B checkout form saved.");
+    try {
+      localStorage.setItem(B2B_STORAGE_KEY, JSON.stringify(data));
+    } catch (err) {
+      console.warn("Failed to persist B2B data:", err);
+    }
+
+    // If there's valid form data, send it through the chat pipeline as meta
+    if (data) {
+      try {
+        await handleSend("B2B form submitted", { action: "submit_b2b", b2b: data });
+      } catch (err) {
+        console.warn("Failed to send B2B data via chat:", err);
+      }
+    }
+  };
+
+  const handleCheckoutComplete = (data: any) => {
+    // Called when CheckoutB2BForm inside ChatWindow is submitted
+    setCheckoutB2bData(data);
+    addMessage("system", "Checkout form saved.");
+    try {
+      localStorage.setItem(B2B_STORAGE_KEY, JSON.stringify(data));
+    } catch (err) {
+      console.warn("Failed to persist checkout data:", err);
+    }
+    // Show cart summary message with user preferences and prompt to place order
+    addMessage(
+      "assistant",
+      "Your cart is ready with your preferences — would you like to place the order?",
+      { checkout: data, client: clientDetailsData, cart },
+      "cart"
+    );
   };
 
   const handleLoginSuccess = (userData: any) => {
@@ -358,8 +446,8 @@ export default function Home() {
               messages={messages}
               onSend={handleSend}
               isLoading={isLoading}
-              onClientSaved={() => addMessage("assistant", "Please complete order details below.", { render: "checkoutForm" }, "payment")}
-              onCheckoutComplete={(data) => addMessage("assistant", "Cart is ready with your preferences — would you like to place the order?")}
+              onClientSaved={handleClientSaved}
+              onCheckoutComplete={handleCheckoutComplete}
             />
           )}
           {activePanel === "login" && (
@@ -371,8 +459,8 @@ export default function Home() {
           )}
           {activePanel === "payment" && (
             <div className="p-4 flex flex-col gap-4">
-              <ClientDetails />
-              <CheckoutB2BForm />
+              <ClientDetails onSaved={handleClientSaved} />
+              <CheckoutB2BForm onSubmit={handleB2BSubmit} />
               <PaymentPanel
                 orderFormId={orderFormId}
                 cartTotal={cartTotal}

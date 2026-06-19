@@ -9,14 +9,14 @@ interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   data?: any;
-    type?: "text" | "products" | "cart" | "login" | "payment" | "order" | "suggestions";
+    type?: "text" | "products" | "cart" | "login" | "payment" | "order" | "suggestions" | "checkout_url";
 }
 
 interface ChatWindowProps {
   messages: Message[];
   onSend: (message: string) => void;
   isLoading: boolean;
-  onClientSaved?: () => void;
+  onClientSaved?: (data?: any) => void;
   onCheckoutComplete?: (data: any) => void;
 }
 
@@ -79,6 +79,18 @@ export default function ChatWindow({ messages, onSend, isLoading, onClientSaved,
                     </button>
                   ))}
                 </div>
+              </div>
+            ) : msg.type === "checkout_url" ? (
+              <div className="max-w-[80%] rounded-2xl px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100">
+                <p className="text-sm">{msg.content}</p>
+                {msg.data?.checkoutUrl && (
+                  <button
+                    onClick={() => window.open(msg.data.checkoutUrl, '_blank')}
+                    className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    💳 Click here to Pay
+                  </button>
+                )}
               </div>
             ) : msg.type === "payment" && msg.data?.render === "clientDetails" ? (
               <div className="max-w-[80%] rounded-2xl px-4 py-2.5 bg-gray-50 dark:bg-gray-800">

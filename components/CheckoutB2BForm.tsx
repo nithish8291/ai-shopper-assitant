@@ -10,35 +10,39 @@ import PaymentMethods from "@/components/PaymentMethods";
 import { useClient } from "@/lib/clientContext";
 import { FUNCTIONAL_AREA_OPTIONS } from "@/lib/functionalArea";
 import { JOB_TITLE_OPTIONS } from "@/lib/jobTitle";
+import countries from 'i18n-iso-countries';
+import en from 'i18n-iso-countries/langs/en.json';
+
+countries.registerLocale(en);
 
 const AddressSchema = z.object({
-  addressLine: z.string().nullable(),
-  addressLineSecond: z.string().nullable(),
-  number: z.string().nullable(),
-  city: z.string().nullable(),
-  state: z.string().nullable(),
-  country: z.string().nullable(),
-  postalCode: z.string().nullable(),
-  countryFullName: z.string().nullable(),
-  stateVtexValue: z.string().nullable(),
-  ext: z.string().nullable(),
+  addressLine: z.string(),
+  addressLineSecond: z.string(),
+  number: z.string(),
+  city: z.string(),
+  state: z.string(),
+  country: z.string(),
+  postalCode: z.string(),
+  countryFullName: z.string(),
+  stateVtexValue: z.string(),
+  ext: z.string(),
 });
 
 const Schema = z.object({
-  customer: z.any().nullable(),
+  customer: z.any(),
   companyAddress: AddressSchema,
   orderAddressSameAsCompany: z.boolean().optional(),
   orderAddress: AddressSchema,
-  functionalArea: z.string().nullable(),
-  jobTitle: z.string().nullable(),
-  paymentMethod: z.string().nullable(),
-  selectedSla: z.string().nullable(),
-  selectedDeliveryChannel: z.string().nullable(),
-  contactPersonId: z.string().nullable(),
-  entityGln: z.string().nullable(),
-  phoneNumberExt: z.string().nullable(),
-  companyTaxExempt: z.boolean().nullable(),
-  companyPhoneNumber: z.string().nullable(),
+  functionalArea: z.string(),
+  jobTitle: z.string(),
+  paymentMethod: z.string(),
+  selectedSla: z.string(),
+  selectedDeliveryChannel: z.string(),
+  contactPersonId: z.string(),
+  entityGln: z.string(),
+  phoneNumberExt: z.string(),
+  companyTaxExempt: z.boolean(),
+  companyPhoneNumber: z.string(),
 });
 
 type FormValues = z.infer<typeof Schema>;
@@ -49,40 +53,40 @@ export default function CheckoutB2BForm({ onSubmit }: { onSubmit?: (data: FormVa
     defaultValues: {
       customer: null,
       companyAddress: {
-        addressLine: null,
-        addressLineSecond: null,
-        number: null,
-        city: null,
-        state: null,
-        country: null,
-        postalCode: null,
-        countryFullName: null,
-        stateVtexValue: null,
-        ext: null,
+        addressLine: "",
+        addressLineSecond: "",
+        number: "",
+        city: "",
+        state: "",
+        country: "",
+        postalCode: "",
+        countryFullName: "",
+        stateVtexValue: "",
+        ext: "",
       },
       orderAddressSameAsCompany: false,
       orderAddress: {
-        addressLine: null,
-        addressLineSecond: null,
-        number: null,
-        city: null,
-        state: null,
-        country: null,
-        postalCode: null,
-        countryFullName: null,
-        stateVtexValue: null,
-        ext: null,
+        addressLine: "",
+        addressLineSecond: "",
+        number: "",
+        city: "",
+        state: "",
+        country: "",
+        postalCode: "",
+        countryFullName: "",
+        stateVtexValue: "",
+        ext: "",
       },
-      functionalArea: null,
-      jobTitle: null,
-      paymentMethod: null,
-      selectedSla: null,
-      selectedDeliveryChannel: null,
-      contactPersonId: null,
-      entityGln: null,
-      phoneNumberExt: null,
-      companyTaxExempt: null,
-      companyPhoneNumber: null,
+      functionalArea: "",
+      jobTitle: "",
+      paymentMethod: "",
+      selectedSla: "",
+      selectedDeliveryChannel: "",
+      contactPersonId: "",
+      entityGln: "",
+      phoneNumberExt: "",
+      companyTaxExempt: false,
+      companyPhoneNumber: "",
     },
   });
 
@@ -93,9 +97,15 @@ export default function CheckoutB2BForm({ onSubmit }: { onSubmit?: (data: FormVa
   const jobOptions = useMemo(() => JOB_TITLE_OPTIONS, []);
 
   const submit = async (data: FormValues) => {
+    console.log("------------------");
+    
     // attach client.customer if available
     if (client?.client) data.customer = client.client;
 
+    if(data?.companyAddress?.country) data.companyAddress.country =  countries.alpha2ToAlpha3(data.companyAddress.country) || ""
+    
+    if(data?.orderAddress?.country) data.orderAddress.country =  countries.alpha2ToAlpha3(data.orderAddress.country) || ""
+    
     // Enrich delivery selections from cached orderForm if missing
     try {
       if (!data.selectedDeliveryChannel || !data.selectedSla) {
@@ -126,7 +136,12 @@ export default function CheckoutB2BForm({ onSubmit }: { onSubmit?: (data: FormVa
     }
 
     console.log("B2B form result:", data);
-    onSubmit?.(data);
+    console.log("CheckoutB2BForm: calling onSubmit?", !!onSubmit);
+    try {
+      onSubmit?.(data);
+    } catch (err) {
+      console.error("Error while calling onSubmit prop:", err);
+    }
   };
 
   return (

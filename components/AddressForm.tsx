@@ -27,7 +27,7 @@ export default function AddressForm({ name, readOnly = false }: Props) {
 
   const country = watch(`${name}.country`) as string | undefined;
 
-  const countries = useMemo(() => Country.getAllCountries(), []);
+  const countryList = useMemo(() => Country.getAllCountries(), []);
 
   const states = useMemo(() => {
     if (!country) return [];
@@ -37,13 +37,13 @@ export default function AddressForm({ name, readOnly = false }: Props) {
   // Keep derived fields in sync
   React.useEffect(() => {
     if (!country) {
-      setValue(`${name}.countryFullName`, null);
-      setValue(`${name}.stateVtexValue`, null);
+      setValue(`${name}.countryFullName`, "");
+      setValue(`${name}.stateVtexValue`, "");
       return;
     }
-    const c = countries.find((x) => x.isoCode === country);
-    setValue(`${name}.countryFullName`, c ? c.name : null);
-  }, [country, countries, name, setValue]);
+    const c = countryList.find((x) => x.isoCode === country);
+    setValue(`${name}.countryFullName`, c ? c.name : "");
+  }, [country, countryList, name, setValue]);
 
   return (
     <div className="bg-white rounded p-3 shadow-sm">
@@ -79,7 +79,7 @@ export default function AddressForm({ name, readOnly = false }: Props) {
           disabled={readOnly}
         >
           <option value="">Select country</option>
-          {countries.map((c) => (
+          {countryList.map((c) => (
             <option key={c.isoCode} value={c.isoCode}>
               {c.name}
             </option>

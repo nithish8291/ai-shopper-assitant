@@ -30,6 +30,7 @@ export interface ShoppingContext {
   selectedProduct?: ProductSkuDTO;
   selectedSku?: string;
   orderFormId?: string;
+  customerData?: Record<string, unknown>;
 }
 
 const redis = new Redis({

@@ -84,7 +84,8 @@ function resolveProductFromContext(
  */
 export async function executeLoop(
   sessionId: string,
-  userMessage: string
+  userMessage: string,
+  customerData: Record<string, unknown>
 ): Promise<ExecutionResult> {
   let shoppingContext: ShoppingContext = {};
   try {
@@ -103,17 +104,34 @@ export async function executeLoop(
     const enrichedContext = buildEnrichedContext(
       shoppingContext,
       steps,
-      lastToolResult
+      lastToolResult,
+      customerData
     );
     
     // Run intent agent with full context
+    console.log(enrichedContext);
+    
     const toolCall = await runIntentAgent(currentMessage, enrichedContext);
 
     console.log("---------------------toolCall");
-    console.log(toolCall);
+    console.log(customerData);
     
+
+    // If no tool is needed, return conversational response
+    if (toolCall.tool === "none" || !VALID_TOOLS.includes(toolCall.tool || "")) {
+      finalMessage = toolCall.response_message;
+      break;
+    }
+
+    if(toolCall.tool === "place_order" && toolCall.shouldInvokeTool === true) {
+      toolCall.parameters = customerData
+    }
+
     const parameters = resolveParameters(toolCall, shoppingContext);
-    
+
+    console.log("---------------------toolCall");
+    console.log(toolCall);
+
     if (
         toolCall.action === "answer_from_context" ||
         toolCall.shouldInvokeTool === false
@@ -128,18 +146,14 @@ export async function executeLoop(
             userMessage,
             product
           );
+          steps.push({
+            tool: "product_detail",
+            parameters,
+            message: finalMessage,
+        });
         } else {
           finalMessage = toolCall.response_message;
         }
-
-        console.log("--------------------finalMessage");
-        console.log(finalMessage);
-        
-        steps.push({
-          tool: "product_detail",
-          parameters,
-          message: finalMessage,
-        });
 
         break;
       }
@@ -155,13 +169,6 @@ export async function executeLoop(
         shoppingContext,
       };
     }
-
-    // If no tool is needed, return conversational response
-    if (toolCall.tool === "none" || !VALID_TOOLS.includes(toolCall.tool || "")) {
-      finalMessage = toolCall.response_message;
-      break;
-    }
-
 
     if (
       toolCall.action === "display_product"
@@ -193,8 +200,9 @@ export async function executeLoop(
       };
     }
 
-    console.log("---------------------toolRes");
-    
+    console.log("---------------------parameters");
+    console.log(sanitizeParameters(parameters))
+
     // Execute the tool
     let toolResult: any;
     try {
@@ -217,9 +225,34 @@ export async function executeLoop(
     // Persist order form-like results to Redis under key `orderform:${sessionId}`
    
     if(toolResult?.isError) {
-      continue;
+      return {
+        success: false,
+        steps,
+        data: toolResult,
+        finalMessage: toolResult?.content?.[0]?.text || "An error occurred while executing the action.",
+        shoppingContext,
+      };
     }
     
+    let parseToolResult = JSON.parse(toolResult?.content?.[0]?.text || "{}");
+
+    if(parseToolResult?.checkoutUrl) {
+      return {
+        success: true,
+        steps : [
+          {
+            tool: "complete_payment",
+            parameters : {},
+            result: parseToolResult,
+            message: "Checkout URL available"
+          }
+        ],
+        finalMessage: "Checkout URL available",
+        shoppingContext,
+        data: toolResult
+      };
+    }
+
      try {
       const relevantTools = ["add_item_to_cart", "update_item_in_cart", "get_cart", "create_new_cart"];
       if (relevantTools.includes(toolCall.tool || "")) {
@@ -347,7 +380,8 @@ export async function executeLoop(
 function buildEnrichedContext(
   shoppingContext: ShoppingContext,
   steps: ExecutionStep[],
-  lastToolResult: unknown
+  lastToolResult: unknown,
+  customerData: Record<string, unknown>
 ): Record<string, unknown> {
   const context: Record<string, unknown> = {
     orderFormId: shoppingContext.orderFormId || null,
@@ -380,6 +414,8 @@ function buildEnrichedContext(
   if (lastToolResult) {
     context.lastToolResult = lastToolResult;
   }
+
+  context.customerData = customerData;
 
   return context;
 }

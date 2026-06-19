@@ -3,7 +3,7 @@ import { executeLoop } from "@/agents/executor/index";
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, sessionId, context, meta } = await req.json();
+    const { message, sessionId, context, customerData } = await req.json();
     
     if (!message) {
       return NextResponse.json(
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     // Use sessionId from client, or fall back to a default
     const resolvedSessionId = sessionId || context?.sessionId;
     // Run the multi-step execution loop with persistent shopping memory
-    const result = await executeLoop(resolvedSessionId, message);
+    const result = await executeLoop(resolvedSessionId, message, customerData);
     
     // Determine the primary intent from the last executed tool step
     const lastToolStep = [...result.steps].reverse().find((s) => s.tool);
@@ -93,6 +93,8 @@ export async function POST(req: NextRequest) {
       }
     };
 
+    console.log("----------------------result");
+    console.log(result);
     
 
     return NextResponse.json({
