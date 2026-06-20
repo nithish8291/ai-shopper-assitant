@@ -1,10 +1,21 @@
 import { Product } from "@/lib/shopping-memory";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { SEARCH_INTENT_PROMPT } from "./search.intent.prompt";
 import { SKU_INTENT_PROMPT } from "./sku.intent.prompt";
 import { CART_INTENT_PROMPT } from "./cart.intent.prompt";
 import { CHECKOUT_INTENT_PROMPT } from "./checkout.intent.prompt";
 
-const SYSTEM_PROMPT = `
+const PRODUCT_CONTEXT_PATH = path.join(
+  process.cwd(),
+  "agents",
+  "utils",
+  "product-context.md",
+);
+
+const PRODUCT_CONTEXT_MARKDOWN = readProductContext();
+
+const CATALOG_PROMPT = `
 You are an AI Shopping Assistant Agent for an eCommerce platform.
 
 Your task is to analyze the user's message, identify their intent, and determine which tool to invoke with appropriate parameters.
@@ -17,20 +28,125 @@ ${SEARCH_INTENT_PROMPT}
 
 ${SKU_INTENT_PROMPT}
 
-${CART_INTENT_PROMPT}
+Return ONLY JSON.
+`;
+
+const CHECKOUT_PROMPT = `
+You are an AI Shopping Assistant Agent for an eCommerce platform.
+Your task is to analyze the user's message, identify their intent, and determine which tool to invoke with appropriate parameters.
+
+You must return ONLY valid JSON with no explanations.
+## Available Tools
 
 ${CHECKOUT_INTENT_PROMPT}
 
 Return ONLY JSON.
 `;
 
-export function buildPlannerPrompt(
+
+const CART_PROMPT = `
+You are an AI Shopping Assistant Agent for an eCommerce platform.
+Your task is to analyze the user's message, identify their intent, and determine which tool to invoke with appropriate parameters.
+
+You must return ONLY valid JSON with no explanations.
+## Available Tools
+
+${CART_INTENT_PROMPT}
+
+Return ONLY JSON.
+`;
+
+
+export function buildCatalogPrompt(
   userInput: string,
   context?: Record<string, unknown>,
 ): string {
   const contextStr = context ? JSON.stringify(context) : "{}";
   return `
-${SYSTEM_PROMPT}
+${CATALOG_PROMPT}
+
+-----------------------------------
+CONVERSATION CONTEXT
+-----------------------------------
+${contextStr}
+
+-----------------------------------
+USER MESSAGE
+-----------------------------------
+${userInput}
+
+`;
+}
+
+export function buildCatalogSuggestPrompt(
+  userInput: string
+): string {
+  return `
+
+-----------------------------------
+PRODUCT KNOWLEDGE BASE
+-----------------------------------
+${PRODUCT_CONTEXT_MARKDOWN}
+
+-----------------------------------
+
+-----------------------------------
+USER MESSAGE
+-----------------------------------
+${userInput}
+
+Rules return the json response in the following format:
+{
+  "action": "suggest_products",
+  "intent": "",
+  "tool": "suggest_products",
+  "nextAction": "search_products",
+  "should_invoke_tool": true,
+  "parameters": {
+    "query": "string",
+   },
+   response_message: "string",
+   reason : "string"
+`;
+}
+
+function readProductContext(): string {
+  try {
+    return readFileSync(PRODUCT_CONTEXT_PATH, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+
+export function buildCheckoutPrompt(
+  userInput: string,
+  context?: Record<string, unknown>,
+): string {
+  const contextStr = context ? JSON.stringify(context) : "{}";
+  return `
+${CHECKOUT_PROMPT}
+
+-----------------------------------
+CONVERSATION CONTEXT
+-----------------------------------
+${contextStr}
+
+-----------------------------------
+USER MESSAGE
+-----------------------------------
+${userInput}
+
+`;
+}
+
+export function buildCartPrompt(
+  userInput: string,
+  context?: Record<string, unknown>,
+): string {
+  const contextStr = context ? JSON.stringify(context) : "{}";
+  return `
+${CART_PROMPT}
 
 -----------------------------------
 CONVERSATION CONTEXT

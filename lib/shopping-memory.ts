@@ -31,6 +31,14 @@ export interface ShoppingContext {
   selectedSku?: string;
   orderFormId?: string;
   customerData?: Record<string, unknown>;
+  orderFormItems?: Array<{
+    id: string;
+    quantity: number;
+    price: number;
+    skuName?: string;
+    name?: string;
+    skuId?: string;
+  }>;
 }
 
 const redis = new Redis({

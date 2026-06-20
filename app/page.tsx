@@ -113,8 +113,6 @@ export default function Home() {
         setIsLoading(false);
         return;
       }
-
-      
       
       switch (data.intent) {
         case "search_products": {
@@ -126,6 +124,37 @@ export default function Home() {
             addMessage("assistant", `Found ${productList.length} product(s) for you:`);
           } else {
             addMessage("assistant", "No products found. Try a different search term.");
+          }
+          break;
+        }
+
+        case "suggest_products": {
+          const suggestions = data.data?.content?.[0]?.text
+            ? JSON.parse(data.data.content[0].text)
+            : data.data;
+          if (Array.isArray(suggestions) && suggestions.length > 0) {
+            setProducts(suggestions);
+
+            addMessage("assistant", `Found ${suggestions.length} product(s) for you:`);
+
+            if(data.responseMessage){
+              addMessage("assistant", data.responseMessage);
+            }
+            if(data.reason){
+              addMessage("assistant", data.reason);
+            }
+            if(data.price){
+              addMessage("assistant", data.price);
+            }
+            if(data.suggestedProduct){
+              addMessage("assistant", `Suggested product: ${data.suggestedProduct}`);
+            }
+            if(data.suggestedCapacity){
+              addMessage("assistant", `Suggested capacity: ${data.suggestedCapacity}`);
+            }
+
+          }else {
+            addMessage("assistant", "No product suggestions available.");
           }
           break;
         }
@@ -148,7 +177,7 @@ export default function Home() {
           break;
         }
 
-        case "add_to_cart":
+        case "add_to_cart":  
         case "update_item_in_cart": {
           const cartData = data.data?.content?.[0]?.text
             ? JSON.parse(data.data.content[0].text)

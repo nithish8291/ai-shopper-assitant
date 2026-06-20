@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeLoop } from "@/agents/executor/index";
+import { runSupervisorAgent } from "@/agents/supervisor";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,21 +15,68 @@ export async function POST(req: NextRequest) {
 
     // Use sessionId from client, or fall back to a default
     const resolvedSessionId = sessionId || context?.sessionId;
-    // Run the multi-step execution loop with persistent shopping memory
-    const result = await executeLoop(resolvedSessionId, message, customerData);
-    
-    // Determine the primary intent from the last executed tool step
-    const lastToolStep = [...result.steps].reverse().find((s) => s.tool);
-    const intent = lastToolStep?.tool || "none";
 
-    const buildSuggestions = (intentName: string) => {
+    // Temporary short-circuit: inspect supervisor output before execution loop.
+    const supervisorResult = await runSupervisorAgent(message, {
+      sessionId: resolvedSessionId,
+      customerData,
+      context,
+    });
+
+    console.log("---------------------superresy");
+    
+    console.log(supervisorResult);
+    
+    // Run the multi-step execution loop with supervisor routing
+    const result = await executeLoop(resolvedSessionId, message, customerData, supervisorResult);
+
+    const intent = result.tool || "none";
+
+    const parseResponseData = (payload: unknown): unknown => {
+      if (
+        payload &&
+        typeof payload === "object" &&
+        "content" in payload &&
+        Array.isArray((payload as { content?: Array<{ text?: string }> }).content)
+      ) {
+        const text = (payload as { content: Array<{ text?: string }> }).content[0]?.text;
+        if (text) {
+          try {
+            return JSON.parse(text);
+          } catch {
+            return payload;
+          }
+        }
+      }
+
+      return payload;
+    };
+
+    const parsedData = parseResponseData(result.data);
+
+    const buildSuggestions = (intentName: string, responseData: unknown): string[] => {
+      const data = responseData as
+        | { items?: unknown[]; addedItem?: { name?: string }; checkoutUrl?: string }
+        | unknown[]
+        | null
+        | undefined;
+
       switch (intentName) {
-        case "search_products":
+        case "search_products": {
+          const products = Array.isArray(data) ? data : [];
+          if (products.length === 0) {
+            return [
+              "No matching products found. Try a broader keyword.",
+              "Try searching by brand, category, or SKU.",
+            ];
+          }
+
           return [
             "I found several matching products — would you like to view details for any of them?",
             "You can add a product to your cart directly from the listing.",
             "Try refining your search with a different keyword or filter to get better results.",
           ];
+        }
         case "get_sku_details":
           return [
             "Here are the SKU details — would you like to add this item to your cart?",
@@ -39,19 +87,48 @@ export async function POST(req: NextRequest) {
             "Your cart has been created — add your first item to get started.",
             "You can browse categories to find items to add to your cart.",
           ];
-        case "get_cart":
+        case "add_item_to_cart":
+        case "update_item_in_cart": {
+          const addedItemName = !Array.isArray(data) ? data?.addedItem?.name : undefined;
+          return [
+            addedItemName
+              ? `Added ${addedItemName}. Would you like to review your cart now?`
+              : "Item updated — would you like to view your cart now?",
+            "Proceed to checkout when you're ready to complete the purchase.",
+            "Continue shopping to add more items to your cart.",
+          ];
+        }
+        case "get_cart": {
+          const items = !Array.isArray(data) ? data?.items : undefined;
+          const itemCount = Array.isArray(items) ? items.length : 0;
+          if (itemCount === 0) {
+            return [
+              "Your cart is empty. Search for products to add items.",
+              "You can ask for product recommendations based on your needs.",
+            ];
+          }
+
           return [
             "This is your current cart — you can update item quantities or remove items.",
             "When you're ready, proceed to checkout to enter shipping and payment details.",
             "You can also apply a coupon code or estimate shipping costs.",
-            "You can add items to your cart"
+            "You can add items to your cart",
           ];
-        case "update_item_in_cart":
+        }
+        case "proceed_to_checkout": {
+          const checkoutUrl = !Array.isArray(data) ? data?.checkoutUrl : undefined;
+          if (checkoutUrl) {
+            return [
+              "Your checkout link is ready. Open it to complete payment.",
+              "After payment, you can return here and I can help with order tracking.",
+            ];
+          }
+
           return [
-            "Item updated — would you like to view your cart now?",
-            "Proceed to checkout when you're ready to complete the purchase.",
-            "Continue shopping to add more items to your cart.",
+            "You're ready to checkout — confirm shipping details next.",
+            "Then choose payment method and place the order.",
           ];
+        }
         case "get_address_options":
           return [
             "Select one of your saved addresses or add a new shipping address.",
@@ -101,13 +178,19 @@ export async function POST(req: NextRequest) {
       success: result.success,
       data: result.data ?? null,
       message: result.finalMessage,
+      responseMessage: result.responseMessage ?? result.finalMessage,
+      ...(intent === "suggest_products"
+        ? {
+            reason: result.reason ?? null,
+            price: result.price ?? null,
+            suggestedProduct: result.suggestedProduct ?? null,
+            suggestedCapacity: result.suggestedCapacity ?? null,
+          }
+        : {}),
       intent,
-      suggestions: buildSuggestions(intent),
+      suggestions: buildSuggestions(intent, parsedData),
       clarificationNeeded: result.clarificationNeeded ?? null,
-      steps: result.steps.map((s) => ({
-        tool: s.tool,
-        message: s.message,
-      })),
+      tool: result.tool || "none",
       shoppingContext: result.shoppingContext,
     });
   } catch (error: unknown) {

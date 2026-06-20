@@ -24,18 +24,19 @@ export type AgentAction =
   | "no_action";
 
 export type NextAction =
-  | null
+  | ""
   | "generate_product_answer"
   | "generate_cart_answer"
   | "get_sku_details"
   | "display_product"
   | "add_to_cart"
   | "create_cart"
-  | "checkout";
+  | "checkout"
+  | "search_products";
 
 export interface ToolCallResult {
   action: AgentAction;
-  tool: string | null;
+  tool: string;
   nextAction: NextAction;
   parameters: {
     query?: string;
@@ -46,12 +47,11 @@ export interface ToolCallResult {
     orderFormId?: string;
     [key: string]: unknown;
   };
-
   shouldInvokeTool: boolean;
-
   confidence: number;
-
-  reasoning: string;
-
+  reason?: string;
+  price?: string;
   response_message: string;
+  suggested_product?: string;
+  suggested_capacity?: string;
 }

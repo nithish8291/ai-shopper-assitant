@@ -5,7 +5,9 @@ import {
   getShoppingContext,
   updateShoppingContext,
 } from "@/lib/shopping-memory";
-import { generateCartAnswerAgent, generateProductAnswerAgent, runIntentAgent } from "@/agents/planner/index";
+import { CatalogSearchAgent, CatalogSuggestAgent, generateCartAnswerAgent, generateProductAnswerAgent } from "@/agents/catalog/index";
+import { CartAgent, CheckoutAgent } from "@/agents/checkout/index";
+import { SupervisorDecision } from "@/agents/supervisor/index";
 import { ToolCallResult } from "@/agents/types/type";
 import { Redis } from "@upstash/redis";
 
@@ -23,23 +25,36 @@ const VALID_TOOLS = [
   "set_client_profile",
   "set_shipping_address",
   "get_company_address",
-  "place_order"
-];
+  "place_order",
+  "suggest_products"
+] as const;
+
+const ORDERFORM_REDIS_TOOLS = new Set([
+  "add_item_to_cart",
+  "update_item_in_cart",
+  "get_cart",
+  "create_new_cart",
+]);
 
 const MAX_STEPS = 1;
 
+type MCPContent = Array<{ text?: string }>;
+type MCPToolResult = {
+  isError?: boolean;
+  content?: MCPContent;
+};
 
-const sanitizeParameters =(
+const isValidTool = (tool: string): boolean => {
+  return (VALID_TOOLS as readonly string[]).includes(tool);
+};
+
+const sanitizeParameters = (
   params: Record<string, unknown>
 ): Record<string, unknown> => {
   return Object.fromEntries(
-    Object.entries(params).filter(
-      ([_, value]) =>
-        value !== null &&
-        value !== undefined
-    )
+    Object.entries(params).filter(([_, value]) => value !== null && value !== undefined)
   );
-}
+};
 
 export interface ExecutionStep {
   tool: string;
@@ -50,11 +65,115 @@ export interface ExecutionStep {
 
 export interface ExecutionResult {
   success: boolean;
-  steps: ExecutionStep[];
+  tool?: string;
   finalMessage: string;
+  responseMessage?: string;
+  reason?: string;
+  price?: unknown;
   clarificationNeeded?: string;
   shoppingContext: ShoppingContext;
   data?: unknown;
+  suggestedProduct?: string;
+  suggestedCapacity?: string;
+}
+
+function getToolName(toolCall: ToolCallResult): string {
+  return toolCall.tool || "";
+}
+function getToolCallPrice(toolCall: ToolCallResult): unknown {
+  return toolCall.parameters.price ?? toolCall.parameters.priceRange ?? null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getContentText(result: unknown): string | null {
+  const content = (result as MCPToolResult | undefined)?.content;
+  if (Array.isArray(content) && content[0]?.text) {
+    return content[0].text;
+  }
+  return null;
+}
+
+function parseContentText(result: unknown): Record<string, unknown> | null {
+  const text = getContentText(result);
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function persistOrderFormSnapshot(sessionId: string, tool: string, result: unknown): Promise<void> {
+  if (!ORDERFORM_REDIS_TOOLS.has(tool)) {
+    return;
+  }
+
+  const contentText = getContentText(result);
+  const raw = contentText || (typeof result === "string" ? result : JSON.stringify(result));
+  if (!raw) {
+    return;
+  }
+
+  await redis.set(`orderform:${sessionId}`, raw);
+}
+
+function normalizeAddItemResult(parameters: Record<string, unknown>, result: unknown): string | null {
+  try {
+    const skuParam = String(parameters.skuId ?? parameters.sku ?? "");
+    const qtyParam = Number(parameters.quantity ?? parameters.qty ?? parameters.qtd ?? 1);
+
+    const parsed = parseContentText(result) || (result as Record<string, unknown>);
+    const items =
+      (parsed as { items?: unknown[]; order?: { items?: unknown[] }; orderForm?: { items?: unknown[] } })
+        ?.items ||
+      (parsed as { order?: { items?: unknown[] } })?.order?.items ||
+      (parsed as { orderForm?: { items?: unknown[] } })?.orderForm?.items ||
+      [];
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return null;
+    }
+
+    const found = items.find((it) => {
+      const item = it as Record<string, unknown>;
+      const candidateSku = String(
+        item.skuId || item.id || item.itemId || item.productId || ""
+      );
+      return candidateSku === skuParam || skuParam === "";
+    }) as Record<string, unknown> | undefined;
+
+    if (!found) {
+      return null;
+    }
+
+    const addedItem = {
+      name:
+        found.name || found.productName || found.itemName || found.title || null,
+      price: found.sellingPrice ?? found.price ?? found.unitPrice ?? null,
+      quantity: found.quantity ?? found.qty ?? qtyParam,
+    };
+
+    const content = (result as MCPToolResult)?.content;
+    if (Array.isArray(content) && content[0]) {
+      content[0].text = JSON.stringify({
+        orderFormId:
+          (parsed as { orderFormId?: string; id?: string }).orderFormId ||
+          (parsed as { id?: string }).id ||
+          null,
+        addedItem,
+      });
+    }
+
+    return `Added ${addedItem.quantity} x ${addedItem.name} to your cart.`;
+  } catch {
+    return null;
+  }
 }
 
 
@@ -82,10 +201,31 @@ function resolveProductFromContext(
  * 5. Handles clarification when needed
  * 6. Persists updated shopping context
  */
+async function resolveAgentToolCall(
+  agentToInvoke: SupervisorDecision["agentToInvoke"],
+  userMessage: string,
+  context: Record<string, unknown>
+): Promise<ToolCallResult> {
+  switch (agentToInvoke) {
+    case "CatalogSuggestAgent":
+      return CatalogSuggestAgent(userMessage);
+    case "CatalogSearchAgent":
+      return CatalogSearchAgent(userMessage, context);
+    case "CartAgent":
+      return CartAgent(userMessage, context);
+    case "CheckoutAgent":
+    case "OrderAgent":
+      return CheckoutAgent(userMessage, context);
+    default:
+      return CatalogSearchAgent(userMessage, context);
+  }
+}
+
 export async function executeLoop(
   sessionId: string,
   userMessage: string,
-  customerData: Record<string, unknown>
+  customerData: Record<string, unknown>,
+  supervisorDecision?: SupervisorDecision
 ): Promise<ExecutionResult> {
   let shoppingContext: ShoppingContext = {};
   try {
@@ -94,47 +234,67 @@ export async function executeLoop(
     console.warn("Failed to load shopping context from Redis:", err);
   }
 
-  const steps: ExecutionStep[] = [];
   let lastToolResult: unknown = null;
+  let lastTool = "none";
   let finalMessage = "";
+  let lastResponseMessage: string | undefined;
+  let lastReason: string | undefined;
+  let lastPrice: unknown;
+  let suggestedProduct: string | undefined;
+  let suggestedCapacity: string | undefined;
   let currentMessage = userMessage;
 
   for (let i = 0; i < MAX_STEPS; i++) {
     // Build enriched context from shopping memory + previous tool results
     const enrichedContext = buildEnrichedContext(
       shoppingContext,
-      steps,
       lastToolResult,
       customerData
     );
-    
-    // Run intent agent with full context
-    console.log(enrichedContext);
-    
-    const toolCall = await runIntentAgent(currentMessage, enrichedContext);
 
-    console.log("---------------------toolCall");
-    console.log(customerData);
+    console.log("----------------------enrichedContext")
+    console.log(JSON.stringify(enrichedContext, null, 2 ));
     
+    const toolCall = supervisorDecision
+      ? await resolveAgentToolCall(supervisorDecision.agentToInvoke, currentMessage, enrichedContext)
+      : await CatalogSearchAgent(currentMessage, enrichedContext);
+    
+    console.log("-------------------toolCall");
+    console.log(toolCall)
+    
+    const toolName = getToolName(toolCall);
+    lastTool = toolName || "none";
+    lastResponseMessage = toolCall.response_message;
+    if (toolName === "suggest_products") {
+      lastReason = toolCall.reason;
+      lastPrice = toolCall.price;
+      suggestedProduct = toolCall.suggested_product;
+      suggestedCapacity = toolCall.suggested_capacity;
+    } else {
+      lastReason = undefined;
+      lastPrice = undefined;
+      suggestedProduct = undefined;
+      suggestedCapacity = undefined;
+    }
 
     // If no tool is needed, return conversational response
-    if (toolCall.tool === "none" || !VALID_TOOLS.includes(toolCall.tool || "")) {
+    if (toolName === "none" || !isValidTool(toolName)) {
       finalMessage = toolCall.response_message;
       break;
     }
 
-    if(toolCall.tool === "place_order" && toolCall.shouldInvokeTool === true) {
-      toolCall.parameters = customerData
+    if (toolName === "place_order" && toolCall.shouldInvokeTool === true) {
+      
+      toolCall.parameters = {
+        ... customerData,
+        ...toolCall.parameters
+      };
     }
 
     const parameters = resolveParameters(toolCall, shoppingContext);
 
-    console.log("---------------------toolCall");
-    console.log(toolCall);
-
     if (
-        toolCall.action === "answer_from_context" ||
-        toolCall.shouldInvokeTool === false
+        toolCall.action === "answer_from_context" 
       ) {
         const product = resolveProductFromContext(
           shoppingContext,
@@ -146,11 +306,7 @@ export async function executeLoop(
             userMessage,
             product
           );
-          steps.push({
-            tool: "product_detail",
-            parameters,
-            message: finalMessage,
-        });
+          lastTool = "product_detail";
         } else {
           finalMessage = toolCall.response_message;
         }
@@ -158,13 +314,17 @@ export async function executeLoop(
         break;
       }
 
+    if(toolCall.shouldInvokeTool === false) {
+      break
+    } 
     // Check if clarification is needed
     const clarification = detectClarification(toolCall, shoppingContext);
     if (clarification) {
       return {
         success: true,
-        steps,
+        tool: toolName,
         finalMessage: clarification,
+        responseMessage: toolCall.response_message,
         clarificationNeeded: clarification,
         shoppingContext,
       };
@@ -182,104 +342,83 @@ export async function executeLoop(
 
       return {
         success: true,
-        steps,
+        tool: toolName,
         finalMessage,
+        responseMessage: toolCall.response_message,
         shoppingContext,
         data: product
       };
     }
     // Check for missing required parameters that need clarification
-    const missingParam = checkMissingRequiredParams(toolCall.tool || "", parameters);
+    const missingParam = checkMissingRequiredParams(toolName, parameters);
     if (missingParam) {
       return {
         success: true,
-        steps,
+        tool: toolName,
         finalMessage: missingParam,
+        responseMessage: toolCall.response_message,
         clarificationNeeded: missingParam,
         shoppingContext,
       };
     }
 
-    console.log("---------------------parameters");
-    console.log(sanitizeParameters(parameters))
+    const sanitizedParameters = sanitizeParameters(parameters);
 
+    console.log("-------------------reeacjed tool invoke");
+    
     // Execute the tool
-    let toolResult: any;
+    let toolResult: unknown;
     try {
-      toolResult = await callMCPTool(toolCall.tool || "", sanitizeParameters(parameters));
+      if(toolName === "suggest_products"){
+        toolResult = await callMCPTool(toolCall.nextAction, sanitizedParameters);
+      }else{
+        toolResult = await callMCPTool(toolName, sanitizedParameters);
+      }
     } catch (err) {
-      console.error(`MCP tool call failed for ${toolCall.tool}:`, err);
+      console.error(`MCP tool call failed for ${toolName}:`, err);
       const errorMsg = err instanceof Error ? err.message : "Tool execution failed";
       return {
         success: false,
-        steps,
+        tool: toolName,
         finalMessage: `Sorry, I encountered an error while executing that action: ${errorMsg}. Please try again.`,
+        responseMessage: toolCall.response_message,
         shoppingContext,
         data: null,
       };
     }
 
-    console.log("----------------------toolResult");
-    console.log(toolResult);
-
     // Persist order form-like results to Redis under key `orderform:${sessionId}`
-   
-    if(toolResult?.isError) {
+
+    if ((toolResult as MCPToolResult)?.isError) {
       return {
         success: false,
-        steps,
+        tool: toolName,
         data: toolResult,
-        finalMessage: toolResult?.content?.[0]?.text || "An error occurred while executing the action.",
+        finalMessage: getContentText(toolResult) || "An error occurred while executing the action.",
+        responseMessage: toolCall.response_message,
         shoppingContext,
       };
     }
-    
-    let parseToolResult = JSON.parse(toolResult?.content?.[0]?.text || "{}");
 
-    if(parseToolResult?.checkoutUrl) {
+    const parsedToolResult = parseContentText(toolResult) || {};
+
+    if ((parsedToolResult as { checkoutUrl?: string }).checkoutUrl) {
       return {
         success: true,
-        steps : [
-          {
-            tool: "complete_payment",
-            parameters : {},
-            result: parseToolResult,
-            message: "Checkout URL available"
-          }
-        ],
+        tool: "complete_payment",
         finalMessage: "Checkout URL available",
+        responseMessage: toolCall.response_message,
         shoppingContext,
-        data: toolResult
+        data: toolResult,
       };
     }
 
-     try {
-      const relevantTools = ["add_item_to_cart", "update_item_in_cart", "get_cart", "create_new_cart"];
-      if (relevantTools.includes(toolCall.tool || "")) {
-        const content = toolResult?.content;
-        let raw: string | null = null;
-        if (Array.isArray(content) && content[0]?.text) {
-          raw = content[0].text;
-        } else {
-          raw = typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult);
-        }
-
-        if (raw) {
-          await redis.set(`orderform:${sessionId}`, raw);
-        }
-      }
+    try {
+      await persistOrderFormSnapshot(sessionId, toolName, toolResult);
     } catch (err) {
       console.warn("Failed saving order form to Redis:", err);
-   }
+    }
 
-    
-    const step: ExecutionStep = {
-      tool: toolCall.tool || "",
-      parameters,
-      result: toolResult,
-      message: toolCall.response_message,
-    };
-    steps.push(step);
     lastToolResult = toolResult;
 
     // Update shopping context based on tool results
@@ -287,7 +426,7 @@ export async function executeLoop(
       await updateContextFromResult(
         sessionId,
         shoppingContext,
-        toolCall.tool || "",
+        toolName,
         parameters,
         toolResult
       );
@@ -300,63 +439,39 @@ export async function executeLoop(
 
     // If this was an add_item_to_cart call, extract skuId and quantity from parameters
     // and try to find the corresponding item in the returned order/cart to build a simplified addedItem
-    if (toolCall.tool === "add_item_to_cart") {
-      try {
-        const skuParam = String(parameters.skuId ?? parameters.sku ?? "");
-        const qtyParam = Number(parameters.quantity ?? parameters.qty ?? parameters.qtd ?? 1);
-
-        const content = (toolResult as any)?.content;
-        let parsed: any = toolResult; 
-        if (Array.isArray(content) && content[0]?.text) {
-          parsed = JSON.parse(content[0].text);
-        }
-
-        const items = parsed?.items || parsed?.order?.items || parsed?.orderForm?.items || [];
-        if (Array.isArray(items) && items.length > 0) {
-          // try to find by sku
-          const found = items.find((it: any) => {
-            const candidateSku = String(it.skuId || it.id || it.itemId || it.productId || "");
-            return candidateSku === skuParam || skuParam === "";
-          });
-
-          if (found) {
-            const addedItem = {
-              name: found.name || found.productName || found.itemName || found.title || null,
-              price: (found.sellingPrice ?? found.price ?? found.unitPrice ?? null),
-              quantity: (found.quantity ?? found.qty ?? qtyParam)
-            };
-            toolResult.content[0].text = JSON.stringify({
-              orderFormId: parsed?.orderFormId || parsed?.id || null,
-              addedItem
-            });
-            finalMessage = `Added ${addedItem.quantity} x ${addedItem.name} to your cart.`;
-          }
-        }
-      } catch (err) {
-        // ignore parse errors
+    if (toolName === "add_item_to_cart") {
+      const normalizedMessage = normalizeAddItemResult(parameters, toolResult);
+      if (normalizedMessage) {
+        finalMessage = normalizedMessage;
       }
     }
 
-
-
     if (toolCall.nextAction === "generate_product_answer") {
-      finalMessage = await generateProductAnswerAgent(
-        userMessage,
-        toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text) : []
-      );
+      const productForAnswer =
+        (isRecord(toolResult) ? extractProduct(toolResult) : null) ||
+        resolveProductFromContext(shoppingContext, parameters);
+
+      if (productForAnswer) {
+        finalMessage = await generateProductAnswerAgent(
+          userMessage,
+          productForAnswer
+        );
+      } else {
+        finalMessage = toolCall.response_message;
+      }
       break;
     }
 
     if (toolCall.nextAction === "generate_cart_answer") {
       finalMessage = await generateCartAnswerAgent(
         userMessage,
-        toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text) : []
+        parseContentText(toolResult) || []
       );
       break;
     }
     
     // Determine if we need another step (e.g., auto-creating cart before adding item)
-    const nextAction = determineNextStep(toolCall.tool || "", toolResult, shoppingContext);
+    const nextAction = determineNextStep(toolName, toolResult, shoppingContext);
     if (!nextAction) {
       break;
     }
@@ -367,8 +482,17 @@ export async function executeLoop(
 
   return {
     success: true,
-    steps,
+    tool: lastTool,
     finalMessage,
+    responseMessage: lastResponseMessage ?? finalMessage,
+    ...(lastTool === "suggest_products"
+      ? {
+          reason: lastReason,
+          price: lastPrice,
+          suggestedProsuct: suggestedProduct,
+          suggestedCapacity: suggestedCapacity
+        }
+      : {}),
     shoppingContext: await getShoppingContext(sessionId),
     data: lastToolResult,
   };
@@ -379,7 +503,6 @@ export async function executeLoop(
  */
 function buildEnrichedContext(
   shoppingContext: ShoppingContext,
-  steps: ExecutionStep[],
   lastToolResult: unknown,
   customerData: Record<string, unknown>
 ): Record<string, unknown> {
@@ -399,15 +522,6 @@ function buildEnrichedContext(
       skuId: p?.defaultSku[0]?.skuId,
       defaultSku: p?.defaultSku,
       skuOptions: p?.skuOptions
-    }));
-  }
-
-  // Inject previous step results for multi-step awareness
-  if (steps.length > 0) {
-    context.previousSteps = steps.map((s) => ({
-      tool: s.tool,
-      success: !!s.result,
-      summary: summarizeToolResult(s.tool, s.result),
     }));
   }
 
@@ -528,6 +642,7 @@ async function updateContextFromResult(
   const res = result as Record<string, unknown> | undefined;
 
   switch (tool) {
+    case "suggest_products":
     case "search_products": {
       const products = extractProducts(res);
       if (products.length > 0) {
@@ -547,6 +662,7 @@ async function updateContextFromResult(
       const orderFormId = extractOrderFormId(res);
       if (orderFormId) {
         patch.orderFormId = orderFormId;
+        patch.orderFormItems = extractOrderFormItems(res);
       }
       break;
     }
@@ -555,6 +671,7 @@ async function updateContextFromResult(
       const updatedOrderFormId = extractOrderFormId(res);
       if (updatedOrderFormId) {
         patch.orderFormId = updatedOrderFormId;
+        patch.orderFormItems = extractOrderFormItems(res);
       }
       break;
     }
@@ -588,34 +705,6 @@ function determineNextStep(
   }
 
   return null;
-}
-
-/**
- * Summarize tool results for context injection
- */
-function summarizeToolResult(tool: string, result: unknown): string {
-  if (!result) return "No result";
-  const res = result as Record<string, unknown>;
-
-  switch (tool) {
-    case "search_products": {
-      const content = res.content as Array<{ text?: string }> | undefined;
-      if (content?.[0]?.text) {
-        return `Found products`;
-      }
-      return "Search completed";
-    }
-    case "create_new_cart":
-      return "Cart created";
-    case "update_item_in_cart":
-      return "Cart updated";
-    case "get_sku_details":
-      return "Product details retrieved";
-    case "place_order":
-      return "Order placed";
-    default:
-      return "Completed";
-  }
 }
 
 /**
@@ -697,4 +786,30 @@ function extractOrderFormId(res: Record<string, unknown> | undefined): string | 
   }
 
   return null;
+}
+
+function extractOrderFormItems(
+  res: Record<string, unknown> | undefined
+): ShoppingContext["orderFormItems"] | undefined {
+  if (!res) return undefined;
+
+  try {
+    const content = res.content as Array<{ text?: string }> | undefined;
+    if (content?.[0]?.text) {
+      const parsed = JSON.parse(content[0].text);
+      const items = Array.isArray(parsed?.items) ? parsed.items : [];
+      return items.map((it: Record<string, unknown>) => ({
+        id: String(it.id ?? it.skuId ?? ""),
+        quantity: Number(it.quantity ?? 0),
+        price: Number(it.price ?? it.sellingPrice ?? it.unitPrice ?? 0),
+        skuName: it.skuName ? String(it.skuName) : undefined,
+        name: it.name ? String(it.name) : undefined,
+        skuId: it.skuId ? String(it.skuId) : undefined,
+      }));
+    }
+  } catch {
+    // Ignore parse errors
+  }
+
+  return undefined;
 }
